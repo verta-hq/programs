@@ -7,6 +7,7 @@ skip-lint = false
 
 [programs.localnet]
 royalties = "HU9MebBjowZV3Hyr3GagXM2Pzx3xNdwbQbZqsJK3ZMcC"
+royalties_private = "RFNuLuqbuSJ5JcPpcjtLumvrRDQK8ttn5rbSgzxrpQR"
 
 [registry]
 url = "https://api.apr.dev"
