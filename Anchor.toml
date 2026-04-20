@@ -5,16 +5,15 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-royalties = "HU9MebBjowZV3Hyr3GagXM2Pzx3xNdwbQbZqsJK3ZMcC"
-royalties_private = "RFNuLuqbuSJ5JcPpcjtLumvrRDQK8ttn5rbSgzxrpQR"
+[programs.devnet]
+verta_core = "9o42AnCRp9cnpEzA8np5MKxpstoRG2v9DosaKBn6t7Pe"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
-wallet = "~/.config/solana/id.json"
+cluster = "devnet"
+wallet = "/Users/jessebias/.config/solana/jbias.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
