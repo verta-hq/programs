@@ -30,23 +30,9 @@ pub fn withdraw_sol(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
     let vault_lamports = ctx.accounts.user_vault.to_account_info().lamports();
     require!(vault_lamports >= amount, VertaError::InsufficientVaultFunds);
 
-    let user_key = ctx.accounts.user.key();
-    let seeds = &[
-        USER_VAULT_SEED,
-        user_key.as_ref(),
-        &[ctx.accounts.user_vault.bump],
-    ];
-    let signer = &[&seeds[..]];
-
-    let cpi_context = CpiContext::new_with_signer(
-        ctx.accounts.system_program.to_account_info(),
-        system_program::Transfer {
-            from: ctx.accounts.user_vault.to_account_info(),
-            to: ctx.accounts.user.to_account_info(),
-        },
-        signer,
-    );
-    system_program::transfer(cpi_context, amount)?;
+    **ctx.accounts.user_vault.to_account_info().try_borrow_mut_lamports()? -= amount;
+    **ctx.accounts.user.to_account_info().try_borrow_mut_lamports()? += amount;
+    
     Ok(())
 }
 
