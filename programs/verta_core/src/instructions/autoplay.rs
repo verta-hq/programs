@@ -40,35 +40,14 @@ pub fn auto_unlock_episode(ctx: Context<AutoUnlockEpisode>, episode_id: String) 
     }
 
     // 2. Transers
-    let seeds = &[
-        USER_VAULT_SEED,
-        vault_user.as_ref(),
-        &[vault_bump],
-    ];
-    let signer = &[&seeds[..]];
-
     if creator_amount > 0 {
-        let cpi_context = CpiContext::new_with_signer(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: ctx.accounts.user_vault.to_account_info(),
-                to: ctx.accounts.creator_wallet.to_account_info(),
-            },
-            signer,
-        );
-        system_program::transfer(cpi_context, creator_amount)?;
+        **ctx.accounts.user_vault.to_account_info().try_borrow_mut_lamports()? -= creator_amount;
+        **ctx.accounts.creator_wallet.to_account_info().try_borrow_mut_lamports()? += creator_amount;
     }
 
     if platform_amount > 0 {
-        let cpi_context = CpiContext::new_with_signer(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: ctx.accounts.user_vault.to_account_info(),
-                to: ctx.accounts.platform_wallet.to_account_info(),
-            },
-            signer,
-        );
-        system_program::transfer(cpi_context, platform_amount)?;
+        **ctx.accounts.user_vault.to_account_info().try_borrow_mut_lamports()? -= platform_amount;
+        **ctx.accounts.platform_wallet.to_account_info().try_borrow_mut_lamports()? += platform_amount;
     }
 
     // 3. Post-transfer state updates
