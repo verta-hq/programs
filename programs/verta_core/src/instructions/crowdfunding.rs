@@ -1,7 +1,9 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{self, Transfer};
 use crate::state::*;
+use crate::constants::{PLATFORM_AUTHORITY_SEED, TITLE_CONFIG_SEED};
 use crate::errors::VertaError;
+
 
 #[derive(Accounts)]
 #[instruction(series_id: String, goal: u64, deadline: i64)]
@@ -19,11 +21,12 @@ pub struct InitializeCrowdfund<'info> {
     pub admin: Signer<'info>,
     
     #[account(
-        seeds = [b"platform_config"],
+        seeds = [PLATFORM_AUTHORITY_SEED],
         bump = platform_config.bump,
         has_one = admin @ VertaError::Unauthorized
     )]
     pub platform_config: Account<'info, PlatformConfig>,
+
     
     pub system_program: Program<'info, System>,
 }
@@ -68,11 +71,12 @@ pub struct FinalizeCampaign<'info> {
     pub admin: Signer<'info>,
 
     #[account(
-        seeds = [b"platform_config"],
+        seeds = [PLATFORM_AUTHORITY_SEED],
         bump = platform_config.bump,
         has_one = admin @ VertaError::Unauthorized
     )]
     pub platform_config: Account<'info, PlatformConfig>,
+
     
     /// CHECK: Recipient of funds (Production Wallet)
     #[account(mut, constraint = production_wallet.key() == crowdfund.production_wallet @ VertaError::InvalidRecipient)]
