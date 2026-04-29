@@ -91,13 +91,15 @@ pub mod verta_core {
     /// Admin: Initialize a new crowdfunding campaign
     pub fn initialize_crowdfund(
         ctx: Context<InitializeCrowdfund>, 
-        series_id: [u8; 16], 
+        series_id: String, 
         goal: u64, 
         deadline: i64, 
-        production_wallet: Pubkey
+        production_wallet: Pubkey,
+        investor_share_bps: u16
     ) -> Result<()> {
-        instructions::crowdfund::initialize_crowdfund(ctx, series_id, goal, deadline, production_wallet)
+        instructions::crowdfund::initialize_crowdfund(ctx, series_id, goal, deadline, production_wallet, investor_share_bps)
     }
+
 
     /// User: Contribute $SOL to a crowdfunding campaign
     pub fn contribute(ctx: Context<Contribute>, amount: u64) -> Result<()> {
@@ -118,5 +120,11 @@ pub mod verta_core {
     pub fn refund(ctx: Context<Refund>) -> Result<()> {
         instructions::crowdfund::refund(ctx)
     }
+
+    /// User: Claim proportional revenue share from a successful series
+    pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
+        instructions::crowdfund::claim_revenue(ctx)
+    }
 }
+
 

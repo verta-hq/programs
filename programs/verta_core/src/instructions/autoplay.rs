@@ -51,8 +51,27 @@ pub fn auto_unlock_episode(ctx: Context<AutoUnlockEpisode>, episode_id: String) 
     }
 
     // 3. Post-transfer state updates
+    
+    // [NEW] If the creator_wallet is actually a Crowdfund PDA, update its accumulated revenue
+    let (expected_crowdfund_pda, _bump) = Pubkey::find_program_address(
+        &[b"crowdfund", ctx.accounts.title_config.title_id.as_bytes()],
+        ctx.program_id
+    );
+
+    if ctx.accounts.creator_wallet.key() == expected_crowdfund_pda {
+        let mut data = ctx.accounts.creator_wallet.try_borrow_mut_data()?;
+        let mut crowdfund = Crowdfund::try_deserialize(&mut &data[..])?;
+        
+        crowdfund.revenue_accumulated = crowdfund.revenue_accumulated
+            .checked_add(creator_amount)
+            .ok_or(VertaError::MathOverflow)?;
+        
+        crowdfund.try_serialize(&mut &mut data[..])?;
+    }
+
     let vault = &mut ctx.accounts.user_vault;
     vault.total_spent = vault.total_spent.checked_add(total_amount).ok_or(VertaError::MathOverflow)?;
+
 
     let receipt = &mut ctx.accounts.unlock_receipt;
     receipt.series = ctx.accounts.title_config.key();

@@ -4,13 +4,13 @@ use crate::state::*;
 use crate::errors::VertaError;
 
 #[derive(Accounts)]
-#[instruction(series_id: [u8; 16], goal: u64, deadline: i64)]
+#[instruction(series_id: String, goal: u64, deadline: i64)]
 pub struct InitializeCrowdfund<'info> {
     #[account(
         init,
         payer = admin,
         space = 8 + Crowdfund::INIT_SPACE,
-        seeds = [b"crowdfund", series_id.as_ref()],
+        seeds = [b"crowdfund", series_id.as_bytes()],
         bump
     )]
     pub crowdfund: Account<'info, Crowdfund>,
@@ -32,7 +32,7 @@ pub struct InitializeCrowdfund<'info> {
 pub struct Contribute<'info> {
     #[account(
         mut,
-        seeds = [b"crowdfund", crowdfund.series_id.as_ref()],
+        seeds = [b"crowdfund", crowdfund.series_id.as_bytes()],
         bump = crowdfund.bump,
         constraint = crowdfund.status == CrowdfundStatus::Active @ VertaError::CampaignInactive,
         constraint = Clock::get()?.unix_timestamp < crowdfund.deadline @ VertaError::CampaignEnded
@@ -58,7 +58,7 @@ pub struct Contribute<'info> {
 pub struct FinalizeCampaign<'info> {
     #[account(
         mut,
-        seeds = [b"crowdfund", crowdfund.series_id.as_ref()],
+        seeds = [b"crowdfund", crowdfund.series_id.as_bytes()],
         bump = crowdfund.bump,
         constraint = crowdfund.status == CrowdfundStatus::Active @ VertaError::CampaignInactive,
     )]
@@ -85,7 +85,7 @@ pub struct FinalizeCampaign<'info> {
 pub struct Refund<'info> {
     #[account(
         mut,
-        seeds = [b"crowdfund", crowdfund.series_id.as_ref()],
+        seeds = [b"crowdfund", crowdfund.series_id.as_bytes()],
         bump = crowdfund.bump,
         constraint = crowdfund.status == CrowdfundStatus::Refunded @ VertaError::CampaignInactive,
     )]
@@ -105,12 +105,36 @@ pub struct Refund<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+pub struct ClaimRevenue<'info> {
+    #[account(
+        mut,
+        seeds = [b"crowdfund", crowdfund.series_id.as_bytes()],
+        bump = crowdfund.bump,
+        constraint = crowdfund.status == CrowdfundStatus::Succeeded @ VertaError::CampaignInactive,
+    )]
+    pub crowdfund: Account<'info, Crowdfund>,
+
+    #[account(
+        mut,
+        seeds = [b"contribution", crowdfund.key().as_ref(), user.key().as_ref()],
+        bump = contribution.bump,
+    )]
+    pub contribution: Account<'info, Contribution>,
+
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
 pub fn initialize_crowdfund(
     ctx: Context<InitializeCrowdfund>,
-    series_id: [u8; 16],
+    series_id: String,
     goal: u64,
     deadline: i64,
     production_wallet: Pubkey,
+    investor_share_bps: u16,
 ) -> Result<()> {
     let crowdfund = &mut ctx.accounts.crowdfund;
     crowdfund.series_id = series_id;
@@ -119,6 +143,7 @@ pub fn initialize_crowdfund(
     crowdfund.revenue_accumulated = 0;
     crowdfund.deadline = deadline;
     crowdfund.production_wallet = production_wallet;
+    crowdfund.investor_share_bps = investor_share_bps;
     crowdfund.status = CrowdfundStatus::Active;
     crowdfund.bump = ctx.bumps.crowdfund;
     Ok(())
@@ -195,3 +220,37 @@ pub fn refund(ctx: Context<Refund>) -> Result<()> {
 
     Ok(())
 }
+
+pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
+    let crowdfund = &mut ctx.accounts.crowdfund;
+    let contribution = &mut ctx.accounts.contribution;
+
+    // 1. Calculate the total pool dedicated to investors (using BPS)
+    let investor_pool = (crowdfund.revenue_accumulated as u128)
+        .checked_mul(crowdfund.investor_share_bps as u128)
+        .ok_or(VertaError::MathOverflow)?
+        .checked_div(10_000)
+        .ok_or(VertaError::MathOverflow)? as u64;
+
+    // 2. Calculate the user's share of THAT pool: (User Contribution / Goal) * Investor Pool
+    let total_entitled = (contribution.amount_contributed as u128)
+        .checked_mul(investor_pool as u128)
+        .ok_or(VertaError::MathOverflow)?
+        .checked_div(crowdfund.goal as u128)
+        .ok_or(VertaError::MathOverflow)? as u64;
+
+    let claimable = total_entitled.checked_sub(contribution.amount_withdrawn).ok_or(VertaError::MathOverflow)?;
+
+    require!(claimable > 0, VertaError::NoRevenueToClaim);
+
+    // Update state
+    contribution.amount_withdrawn = contribution.amount_withdrawn.checked_add(claimable).ok_or(VertaError::MathOverflow)?;
+
+    // Transfer funds from crowdfund PDA to user
+    **crowdfund.to_account_info().try_borrow_mut_lamports()? -= claimable;
+    **ctx.accounts.user.try_borrow_mut_lamports()? += claimable;
+
+    Ok(())
+}
+
+

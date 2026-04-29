@@ -65,15 +65,19 @@ pub enum CrowdfundStatus {
 #[account]
 #[derive(InitSpace)]
 pub struct Crowdfund {
-    pub series_id: [u8; 16],      // UUID or unique hash
+    #[max_len(32)]
+    pub series_id: String,        // Matches TitleConfig title_id
     pub goal: u64,
     pub total_raised: u64,
     pub revenue_accumulated: u64,
     pub deadline: i64,
     pub production_wallet: Pubkey,
+    pub investor_share_bps: u16,  // Percentage of revenue for crowdfunders (BPS)
     pub status: CrowdfundStatus,
     pub bump: u8,
 }
+
+
 
 #[account]
 #[derive(InitSpace)]

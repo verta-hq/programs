@@ -34,5 +34,8 @@ pub enum VertaError {
     CampaignNotEnded,
     #[msg("The funding goal has not been reached.")]
     GoalNotReached,
+    #[msg("There is no revenue available to claim.")]
+    NoRevenueToClaim,
 }
+
 
