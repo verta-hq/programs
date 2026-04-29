@@ -9,6 +9,9 @@ use instructions::*;
 
 declare_id!("9o42AnCRp9cnpEzA8np5MKxpstoRG2v9DosaKBn6t7Pe");
 
+
+
+
 #[program]
 pub mod verta_core {
     use super::*;
@@ -97,34 +100,35 @@ pub mod verta_core {
         production_wallet: Pubkey,
         investor_share_bps: u16
     ) -> Result<()> {
-        instructions::crowdfund::initialize_crowdfund(ctx, series_id, goal, deadline, production_wallet, investor_share_bps)
+        instructions::crowdfunding::initialize_crowdfund(ctx, series_id, goal, deadline, production_wallet, investor_share_bps)
     }
 
 
     /// User: Contribute $SOL to a crowdfunding campaign
     pub fn contribute(ctx: Context<Contribute>, amount: u64) -> Result<()> {
-        instructions::crowdfund::contribute(ctx, amount)
+        instructions::crowdfunding::contribute(ctx, amount)
     }
 
     /// Admin: Finalize a successful campaign and release funds
     pub fn finalize_campaign(ctx: Context<FinalizeCampaign>) -> Result<()> {
-        instructions::crowdfund::finalize_campaign(ctx)
+        instructions::crowdfunding::finalize_campaign(ctx)
     }
 
     /// Admin: Mark a campaign as failed (enabling refunds)
     pub fn fail_campaign(ctx: Context<FinalizeCampaign>) -> Result<()> {
-        instructions::crowdfund::fail_campaign(ctx)
+        instructions::crowdfunding::fail_campaign(ctx)
     }
 
     /// User: Claim refund from a failed campaign
     pub fn refund(ctx: Context<Refund>) -> Result<()> {
-        instructions::crowdfund::refund(ctx)
+        instructions::crowdfunding::refund(ctx)
     }
 
     /// User: Claim proportional revenue share from a successful series
     pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
-        instructions::crowdfund::claim_revenue(ctx)
+        instructions::crowdfunding::claim_revenue(ctx)
     }
 }
+
 
 

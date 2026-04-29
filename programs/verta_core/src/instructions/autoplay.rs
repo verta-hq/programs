@@ -8,8 +8,6 @@ pub fn auto_unlock_episode(ctx: Context<AutoUnlockEpisode>, episode_id: String) 
     let total_amount;
     let creator_amount;
     let platform_amount;
-    let vault_user;
-    let vault_bump;
 
     {
         let platform_config = &ctx.accounts.platform_config;
@@ -32,12 +30,10 @@ pub fn auto_unlock_episode(ctx: Context<AutoUnlockEpisode>, episode_id: String) 
         
         platform_amount = total_amount.checked_sub(creator_amount).ok_or(VertaError::MathOverflow)?;
 
-        vault_user = vault.user;
-        vault_bump = vault.bump;
-
         let vault_lamports = ctx.accounts.user_vault.to_account_info().lamports();
         require!(vault_lamports >= total_amount, VertaError::InsufficientVaultFunds);
     }
+
 
     // 2. Transers
     if creator_amount > 0 {
