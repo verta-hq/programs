@@ -175,8 +175,17 @@ pub fn contribute(ctx: Context<Contribute>, amount: u64) -> Result<()> {
     
     contribution.amount_contributed = contribution.amount_contributed.checked_add(amount).ok_or(VertaError::MathOverflow)?;
 
+    // 3. Emit event for backend syncing
+    emit!(ContributionEvent {
+        series_id: crowdfund.series_id.clone(),
+        user: ctx.accounts.user.key(),
+        amount,
+        total_raised: crowdfund.total_raised,
+    });
+
     Ok(())
 }
+
 
 pub fn finalize_campaign(ctx: Context<FinalizeCampaign>) -> Result<()> {
     let crowdfund = &mut ctx.accounts.crowdfund;
@@ -252,5 +261,14 @@ pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
 
     Ok(())
 }
+
+#[event]
+pub struct ContributionEvent {
+    pub series_id: String,
+    pub user: Pubkey,
+    pub amount: u64,
+    pub total_raised: u64,
+}
+
 
 
