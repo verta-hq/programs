@@ -26,4 +26,13 @@ pub enum VertaError {
     InsufficientVaultFunds,
     #[msg("Only the designated delegate can perform this action.")]
     OnlyDelegate,
+    #[msg("The crowdfunding campaign is not active.")]
+    CampaignInactive,
+    #[msg("The crowdfunding campaign has ended.")]
+    CampaignEnded,
+    #[msg("The crowdfunding campaign has not ended yet.")]
+    CampaignNotEnded,
+    #[msg("The funding goal has not been reached.")]
+    GoalNotReached,
 }
+
