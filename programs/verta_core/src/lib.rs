@@ -91,6 +91,11 @@ pub mod verta_core {
         instructions::autoplay::auto_unlock_episode(ctx, episode_id)
     }
 
+    /// Frictionless Backend Unlock: Payout only, no on-chain receipt
+    pub fn direct_payout(ctx: Context<DirectPayout>, episode_id: String) -> Result<()> {
+        instructions::autoplay::direct_payout(ctx, episode_id)
+    }
+
     /// Admin: Initialize a new crowdfunding campaign
     pub fn initialize_crowdfund(
         ctx: Context<InitializeCrowdfund>, 

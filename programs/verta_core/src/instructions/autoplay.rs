@@ -5,69 +5,40 @@ use crate::constants::*;
 use crate::errors::*;
 
 pub fn auto_unlock_episode(ctx: Context<AutoUnlockEpisode>, episode_id: String) -> Result<()> {
-    let total_amount;
-    let creator_amount;
-    let platform_amount;
+    let total_amount = ctx.accounts.platform_config.price_sol;
+    let (creator_amount, platform_amount) = calculate_splits(
+        total_amount,
+        ctx.accounts.title_config.creator_bps
+    )?;
 
-    {
-        let platform_config = &ctx.accounts.platform_config;
-        let title_config = &ctx.accounts.title_config;
-        let vault = &ctx.accounts.user_vault;
+    validate_unlock(
+        &ctx.accounts.platform_config,
+        &ctx.accounts.title_config,
+        &ctx.accounts.user_vault,
+        &ctx.accounts.delegate,
+        &episode_id,
+        total_amount
+    )?;
 
-        require!(!platform_config.paused, VertaError::PlatformPaused);
-        require!(title_config.active, VertaError::TitleInactive);
-        require!(vault.auto_play_enabled, VertaError::AutoPlayDisabled);
-        require!(ctx.accounts.delegate.key() == vault.delegate, VertaError::OnlyDelegate);
-        require!(episode_id.len() > 0 && episode_id.len() <= MAX_EPISODE_ID_LEN, VertaError::InvalidEpisodeId);
+    // Perform transfers
+    perform_transfers(
+        &ctx.accounts.user_vault.to_account_info(),
+        &ctx.accounts.creator_wallet.to_account_info(),
+        &ctx.accounts.platform_wallet.to_account_info(),
+        creator_amount,
+        platform_amount
+    )?;
 
-        total_amount = platform_config.price_sol;
-        
-        creator_amount = (total_amount as u128)
-            .checked_mul(title_config.creator_bps as u128)
-            .ok_or(VertaError::MathOverflow)?
-            .checked_div(BPS_DENOMINATOR as u128)
-            .ok_or(VertaError::MathOverflow)? as u64;
-        
-        platform_amount = total_amount.checked_sub(creator_amount).ok_or(VertaError::MathOverflow)?;
-
-        let vault_lamports = ctx.accounts.user_vault.to_account_info().lamports();
-        require!(vault_lamports >= total_amount, VertaError::InsufficientVaultFunds);
-    }
-
-
-    // 2. Transers
-    if creator_amount > 0 {
-        **ctx.accounts.user_vault.to_account_info().try_borrow_mut_lamports()? -= creator_amount;
-        **ctx.accounts.creator_wallet.to_account_info().try_borrow_mut_lamports()? += creator_amount;
-    }
-
-    if platform_amount > 0 {
-        **ctx.accounts.user_vault.to_account_info().try_borrow_mut_lamports()? -= platform_amount;
-        **ctx.accounts.platform_wallet.to_account_info().try_borrow_mut_lamports()? += platform_amount;
-    }
-
-    // 3. Post-transfer state updates
-    
-    // [NEW] If the creator_wallet is actually a Crowdfund PDA, update its accumulated revenue
-    let (expected_crowdfund_pda, _bump) = Pubkey::find_program_address(
-        &[b"crowdfund", ctx.accounts.title_config.title_id.as_bytes()],
-        ctx.program_id
-    );
-
-    if ctx.accounts.creator_wallet.key() == expected_crowdfund_pda {
-        let mut data = ctx.accounts.creator_wallet.try_borrow_mut_data()?;
-        let mut crowdfund = Crowdfund::try_deserialize(&mut &data[..])?;
-        
-        crowdfund.revenue_accumulated = crowdfund.revenue_accumulated
-            .checked_add(creator_amount)
-            .ok_or(VertaError::MathOverflow)?;
-        
-        crowdfund.try_serialize(&mut &mut data[..])?;
-    }
+    // Post-transfer state updates
+    update_crowdfund_revenue(
+        &ctx.accounts.creator_wallet,
+        &ctx.accounts.title_config.title_id,
+        ctx.program_id,
+        creator_amount
+    )?;
 
     let vault = &mut ctx.accounts.user_vault;
     vault.total_spent = vault.total_spent.checked_add(total_amount).ok_or(VertaError::MathOverflow)?;
-
 
     let receipt = &mut ctx.accounts.unlock_receipt;
     receipt.series = ctx.accounts.title_config.key();
@@ -77,6 +48,120 @@ pub fn auto_unlock_episode(ctx: Context<AutoUnlockEpisode>, episode_id: String) 
     receipt.unlocked_at = Clock::get()?.unix_timestamp;
     receipt.bump = ctx.bumps.unlock_receipt;
 
+    Ok(())
+}
+
+/// New Frictionless Unlock: Payout only, no on-chain receipt account
+pub fn direct_payout(ctx: Context<DirectPayout>, episode_id: String) -> Result<()> {
+    let total_amount = ctx.accounts.platform_config.price_sol;
+    let (creator_amount, platform_amount) = calculate_splits(
+        total_amount,
+        ctx.accounts.title_config.creator_bps
+    )?;
+
+    validate_unlock(
+        &ctx.accounts.platform_config,
+        &ctx.accounts.title_config,
+        &ctx.accounts.user_vault,
+        &ctx.accounts.delegate,
+        &episode_id,
+        total_amount
+    )?;
+
+    // Perform transfers
+    perform_transfers(
+        &ctx.accounts.user_vault.to_account_info(),
+        &ctx.accounts.creator_wallet.to_account_info(),
+        &ctx.accounts.platform_wallet.to_account_info(),
+        creator_amount,
+        platform_amount
+    )?;
+
+    // Post-transfer state updates
+    update_crowdfund_revenue(
+        &ctx.accounts.creator_wallet,
+        &ctx.accounts.title_config.title_id,
+        ctx.program_id,
+        creator_amount
+    )?;
+
+    let vault = &mut ctx.accounts.user_vault;
+    vault.total_spent = vault.total_spent.checked_add(total_amount).ok_or(VertaError::MathOverflow)?;
+
+    Ok(())
+}
+
+// Helper functions to avoid duplication
+fn calculate_splits(total_amount: u64, creator_bps: u16) -> Result<(u64, u64)> {
+    let creator_amount = (total_amount as u128)
+        .checked_mul(creator_bps as u128)
+        .ok_or(VertaError::MathOverflow)?
+        .checked_div(BPS_DENOMINATOR as u128)
+        .ok_or(VertaError::MathOverflow)? as u64;
+    
+    let platform_amount = total_amount.checked_sub(creator_amount).ok_or(VertaError::MathOverflow)?;
+    Ok((creator_amount, platform_amount))
+}
+
+fn validate_unlock(
+    platform_config: &Account<PlatformConfig>,
+    title_config: &Account<TitleConfig>,
+    vault: &Account<UserVault>,
+    delegate: &Signer,
+    episode_id: &String,
+    total_amount: u64
+) -> Result<()> {
+    require!(!platform_config.paused, VertaError::PlatformPaused);
+    require!(title_config.active, VertaError::TitleInactive);
+    require!(vault.auto_play_enabled, VertaError::AutoPlayDisabled);
+    require!(delegate.key() == vault.delegate, VertaError::OnlyDelegate);
+    require!(episode_id.len() > 0 && episode_id.len() <= MAX_EPISODE_ID_LEN, VertaError::InvalidEpisodeId);
+    
+    let vault_lamports = vault.to_account_info().lamports();
+    require!(vault_lamports >= total_amount, VertaError::InsufficientVaultFunds);
+    Ok(())
+}
+
+fn perform_transfers<'info>(
+    from: &AccountInfo<'info>,
+    to_creator: &AccountInfo<'info>,
+    to_platform: &AccountInfo<'info>,
+    amount_creator: u64,
+    amount_platform: u64
+) -> Result<()> {
+    if amount_creator > 0 {
+        **from.try_borrow_mut_lamports()? -= amount_creator;
+        **to_creator.try_borrow_mut_lamports()? += amount_creator;
+    }
+
+    if amount_platform > 0 {
+        **from.try_borrow_mut_lamports()? -= amount_platform;
+        **to_platform.try_borrow_mut_lamports()? += amount_platform;
+    }
+    Ok(())
+}
+
+fn update_crowdfund_revenue<'info>(
+    creator_wallet: &AccountInfo<'info>,
+    title_id: &String,
+    program_id: &Pubkey,
+    amount: u64
+) -> Result<()> {
+    let (expected_crowdfund_pda, _bump) = Pubkey::find_program_address(
+        &[b"crowdfund", title_id.as_bytes()],
+        program_id
+    );
+
+    if creator_wallet.key() == expected_crowdfund_pda {
+        let mut data = creator_wallet.try_borrow_mut_data()?;
+        let mut crowdfund = Crowdfund::try_deserialize(&mut &data[..])?;
+        
+        crowdfund.revenue_accumulated = crowdfund.revenue_accumulated
+            .checked_add(amount)
+            .ok_or(VertaError::MathOverflow)?;
+        
+        crowdfund.try_serialize(&mut &mut data[..])?;
+    }
     Ok(())
 }
 
@@ -116,6 +201,45 @@ pub struct AutoUnlockEpisode<'info> {
         bump
     )]
     pub unlock_receipt: Account<'info, EpisodeUnlockReceipt>,
+
+    /// CHECK: Validated via title_config.has_one
+    #[account(mut)]
+    pub creator_wallet: UncheckedAccount<'info>,
+
+    /// CHECK: Validated via platform_config.platform_wallet
+    #[account(
+        mut,
+        constraint = platform_wallet.key() == platform_config.platform_wallet @ VertaError::Unauthorized
+    )]
+    pub platform_wallet: UncheckedAccount<'info>,
+
+    #[account(mut)]
+    pub delegate: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(episode_id: String)]
+pub struct DirectPayout<'info> {
+    #[account(
+        seeds = [PLATFORM_AUTHORITY_SEED],
+        bump = platform_config.bump,
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
+
+    #[account(
+        seeds = [TITLE_CONFIG_SEED, title_config.title_id.as_bytes()],
+        bump = title_config.bump,
+        has_one = creator_wallet @ VertaError::InvalidRecipient,
+    )]
+    pub title_config: Account<'info, TitleConfig>,
+
+    #[account(
+        mut,
+        seeds = [USER_VAULT_SEED, user_vault.user.as_ref()],
+        bump = user_vault.bump,
+    )]
+    pub user_vault: Account<'info, UserVault>,
 
     /// CHECK: Validated via title_config.has_one
     #[account(mut)]
