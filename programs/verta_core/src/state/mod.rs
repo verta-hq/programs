@@ -85,6 +85,15 @@ pub struct Contribution {
     pub user: Pubkey,
     pub amount_contributed: u64,
     pub amount_withdrawn: u64,
+    pub claimed_nft: bool,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct RevenueTracker {
+    pub asset: Pubkey,
+    pub total_claimed: u64,
     pub bump: u8,
 }
 

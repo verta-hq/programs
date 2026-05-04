@@ -129,9 +129,9 @@ pub mod verta_core {
         instructions::crowdfunding::refund(ctx)
     }
 
-    /// User: Claim proportional revenue share from a successful series
-    pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
-        instructions::crowdfunding::claim_revenue(ctx)
+    /// User: Claim their proportional equity NFT after a successful campaign
+    pub fn claim_equity_nft(ctx: Context<ClaimEquityNft>) -> Result<()> {
+        instructions::crowdfunding::claim_equity_nft(ctx)
     }
 }
 
