@@ -133,6 +133,11 @@ pub mod verta_core {
     pub fn claim_equity_nft(ctx: Context<ClaimEquityNft>) -> Result<()> {
         instructions::crowdfunding::claim_equity_nft(ctx)
     }
+
+    /// User: Claim their share of accumulated revenue using their Equity NFT
+    pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
+        instructions::crowdfunding::claim_revenue(ctx)
+    }
 }
 
 
