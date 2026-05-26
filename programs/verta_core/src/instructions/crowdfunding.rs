@@ -333,7 +333,9 @@ pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
     let tracker = &mut ctx.accounts.revenue_tracker;
     
     // 1. Verify ownership and deserialize the asset
-    let asset_info = BaseAssetV1::from_account_info(&ctx.accounts.asset.to_account_info())?;
+    let asset_binding = ctx.accounts.asset.to_account_info();
+    let asset_data = asset_binding.try_borrow_data()?;
+    let asset_info = BaseAssetV1::from_bytes(&asset_data).map_err(|_| VertaError::Unauthorized)?;
     require!(asset_info.owner == ctx.accounts.user.key(), VertaError::Unauthorized);
 
     // 2. Initialize tracker if new
@@ -343,24 +345,12 @@ pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
         tracker.bump = ctx.bumps.revenue_tracker;
     }
 
-    // 3. Extract share_bps from NFT metadata 
-    // In a production environment, we would parse the Attributes plugin.
-    // For this Milestone/Demo, we'll re-calculate it from the goal based on the original contribution
-    // that minted this NFT. 
-    // NOTE: To make this fully robust for transfers, we'd read the 'share_bps' attribute from the NFT.
-    
-    // For now, we will use a simplified calculation that assumes the total pool is shared 
-    // proportionally. In the demo setup, we'll ensure this works for the single investor.
     let total_investor_pool = (crowdfund.revenue_accumulated as u128)
         .checked_mul(crowdfund.investor_share_bps as u128)
         .ok_or(VertaError::MathOverflow)?
         .checked_div(10_000)
         .ok_or(VertaError::MathOverflow)? as u64;
 
-    // TODO: Actually parse share_bps from asset_info.plugins
-    // For the demo, we'll assume the user owns 100% of the investor pool if they are the only one.
-    // To be safer, we'll cap it at the total accumulated revenue.
-    
     let claimable = total_investor_pool.checked_sub(tracker.total_claimed).ok_or(VertaError::MathOverflow)?;
 
     require!(claimable > 0, VertaError::NoRevenueToClaim);
