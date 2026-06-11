@@ -58,3 +58,10 @@ Anchor uses **yarn** and wallet `~/.config/solana/jbias.json` (see
   BPS validation. Keep it in sync with instruction changes.
 - Checked math everywhere; `has_one` constraints on admin/user-owned accounts;
   never remove constraints to make tests pass.
+
+## Documentation sync
+
+This file (and the README where relevant) is part of the change, not an
+afterthought: any commit that alters commands, layout, env vars, auth, routes,
+or cross-repo workflows MUST update the affected docs in the same commit.
+Stale instructions are treated as bugs.
