@@ -1,7 +1,7 @@
-use anchor_lang::prelude::*;
-use crate::state::*;
 use crate::constants::*;
 use crate::errors::*;
+use crate::state::*;
+use anchor_lang::prelude::*;
 
 pub fn create_title_config(
     ctx: Context<CreateTitleConfig>,
@@ -12,9 +12,18 @@ pub fn create_title_config(
     platform_bps: u16,
     active: bool,
 ) -> Result<()> {
-    require!(title_id.len() > 0 && title_id.len() <= MAX_TITLE_ID_LEN, VertaError::InvalidTitleId);
-    require!(creator_bps + platform_bps == BPS_DENOMINATOR, VertaError::InvalidBasisPoints);
-    require!(creator_wallet != Pubkey::default(), VertaError::InvalidRecipient);
+    require!(
+        title_id.len() > 0 && title_id.len() <= MAX_TITLE_ID_LEN,
+        VertaError::InvalidTitleId
+    );
+    require!(
+        creator_bps + platform_bps == BPS_DENOMINATOR,
+        VertaError::InvalidBasisPoints
+    );
+    require!(
+        creator_wallet != Pubkey::default(),
+        VertaError::InvalidRecipient
+    );
 
     let title_config = &mut ctx.accounts.title_config;
     title_config.title_id = title_id;
@@ -38,17 +47,24 @@ pub fn update_title_config(
 ) -> Result<()> {
     let title_config = &mut ctx.accounts.title_config;
 
-    if let Some(val) = new_authority { title_config.authority = val; }
-    if let Some(val) = new_creator_wallet { 
+    if let Some(val) = new_authority {
+        title_config.authority = val;
+    }
+    if let Some(val) = new_creator_wallet {
         require!(val != Pubkey::default(), VertaError::InvalidRecipient);
-        title_config.creator_wallet = val; 
+        title_config.creator_wallet = val;
     }
     if let (Some(cbps), Some(pbps)) = (new_creator_bps, new_platform_bps) {
-        require!(cbps + pbps == BPS_DENOMINATOR, VertaError::InvalidBasisPoints);
+        require!(
+            cbps + pbps == BPS_DENOMINATOR,
+            VertaError::InvalidBasisPoints
+        );
         title_config.creator_bps = cbps;
         title_config.platform_bps = pbps;
     }
-    if let Some(val) = new_active { title_config.active = val; }
+    if let Some(val) = new_active {
+        title_config.active = val;
+    }
 
     Ok(())
 }

@@ -1,8 +1,8 @@
-use anchor_lang::prelude::*;
-use anchor_lang::system_program;
-use crate::state::*;
 use crate::constants::*;
 use crate::errors::*;
+use crate::state::*;
+use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 
 pub fn initialize_user_vault(ctx: Context<InitializeUserVault>) -> Result<()> {
     let vault = &mut ctx.accounts.user_vault;
@@ -30,13 +30,25 @@ pub fn withdraw_sol(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
     let vault_lamports = ctx.accounts.user_vault.to_account_info().lamports();
     require!(vault_lamports >= amount, VertaError::InsufficientVaultFunds);
 
-    **ctx.accounts.user_vault.to_account_info().try_borrow_mut_lamports()? -= amount;
-    **ctx.accounts.user.to_account_info().try_borrow_mut_lamports()? += amount;
-    
+    **ctx
+        .accounts
+        .user_vault
+        .to_account_info()
+        .try_borrow_mut_lamports()? -= amount;
+    **ctx
+        .accounts
+        .user
+        .to_account_info()
+        .try_borrow_mut_lamports()? += amount;
+
     Ok(())
 }
 
-pub fn set_vault_delegate(ctx: Context<SetVaultDelegate>, delegate: Pubkey, enabled: bool) -> Result<()> {
+pub fn set_vault_delegate(
+    ctx: Context<SetVaultDelegate>,
+    delegate: Pubkey,
+    enabled: bool,
+) -> Result<()> {
     let vault = &mut ctx.accounts.user_vault;
     vault.delegate = delegate;
     vault.auto_play_enabled = enabled;

@@ -36,6 +36,20 @@ pub enum VertaError {
     GoalNotReached,
     #[msg("There is no revenue available to claim.")]
     NoRevenueToClaim,
+    #[msg("The provided account is not a valid Metaplex Core asset.")]
+    InvalidAsset,
+    #[msg("The signer does not own this asset.")]
+    NotOwner,
+    #[msg("The asset does not belong to the expected collection.")]
+    WrongCollection,
+    #[msg("The funding goal has already been reached.")]
+    GoalAlreadyReached,
+    #[msg("A Revenue Share Pass has already been minted for this contribution.")]
+    AlreadyMinted,
+    #[msg("The campaign has been cancelled.")]
+    CampaignCancelled,
+    #[msg("The campaign has not been finalized.")]
+    NotFinalized,
+    #[msg("The vault does not hold enough lamports for this payout.")]
+    InsufficientVaultBalance,
 }
-
-

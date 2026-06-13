@@ -1,21 +1,25 @@
-use anchor_lang::prelude::*;
-use crate::state::*;
 use crate::constants::*;
 use crate::errors::*;
+use crate::state::*;
+use anchor_lang::prelude::*;
 
 pub fn initialize_platform(
-    ctx: Context<InitializePlatform>, 
-    admin: Pubkey, 
+    ctx: Context<InitializePlatform>,
+    admin: Pubkey,
     platform_wallet: Pubkey,
     price_sol: u64,
     creator_bps: u16,
     platform_bps: u16,
 ) -> Result<()> {
-    require!(creator_bps + platform_bps == BPS_DENOMINATOR, VertaError::InvalidBasisPoints);
-    
+    require!(
+        creator_bps + platform_bps == BPS_DENOMINATOR,
+        VertaError::InvalidBasisPoints
+    );
+
     let config = &mut ctx.accounts.platform_config;
     config.admin = admin;
     config.platform_wallet = platform_wallet;
+    config.revenue_share_collection = Pubkey::default();
     config.paused = false;
     config.price_sol = price_sol;
     config.creator_bps = creator_bps;
@@ -34,14 +38,25 @@ pub fn update_platform_config(
     paused: Option<bool>,
 ) -> Result<()> {
     let config = &mut ctx.accounts.platform_config;
-    
-    if let Some(val) = new_admin { config.admin = val; }
-    if let Some(val) = new_wallet { config.platform_wallet = val; }
-    if let Some(val) = new_price { config.price_sol = val; }
-    if let Some(p) = paused { config.paused = p; }
-    
+
+    if let Some(val) = new_admin {
+        config.admin = val;
+    }
+    if let Some(val) = new_wallet {
+        config.platform_wallet = val;
+    }
+    if let Some(val) = new_price {
+        config.price_sol = val;
+    }
+    if let Some(p) = paused {
+        config.paused = p;
+    }
+
     if let (Some(cbps), Some(pbps)) = (new_creator_bps, new_platform_bps) {
-        require!(cbps + pbps == BPS_DENOMINATOR, VertaError::InvalidBasisPoints);
+        require!(
+            cbps + pbps == BPS_DENOMINATOR,
+            VertaError::InvalidBasisPoints
+        );
         config.creator_bps = cbps;
         config.platform_bps = pbps;
     }

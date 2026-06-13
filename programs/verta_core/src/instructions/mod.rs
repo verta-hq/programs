@@ -1,13 +1,11 @@
 pub mod admin;
-pub mod series;
-pub mod vault;
 pub mod autoplay;
 pub mod crowdfunding;
+pub mod series;
+pub mod vault;
 
 pub use admin::*;
-pub use series::*;
-pub use vault::*;
 pub use autoplay::*;
 pub use crowdfunding::*;
-
-
+pub use series::*;
+pub use vault::*;

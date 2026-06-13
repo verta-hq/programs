@@ -7,10 +7,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("9o42AnCRp9cnpEzA8np5MKxpstoRG2v9DosaKBn6t7Pe");
-
-
-
+declare_id!("D2FTBiHZkkaGAQzLcivACqEuZnSAKatZzCg8ej5bVzUT");
 
 #[program]
 pub mod verta_core {
@@ -18,14 +15,21 @@ pub mod verta_core {
 
     /// Platform Admin: Initialize the Verta Protocol
     pub fn initialize_platform(
-        ctx: Context<InitializePlatform>, 
-        admin: Pubkey, 
+        ctx: Context<InitializePlatform>,
+        admin: Pubkey,
         platform_wallet: Pubkey,
         price_sol: u64,
         creator_bps: u16,
         platform_bps: u16,
     ) -> Result<()> {
-        instructions::admin::initialize_platform(ctx, admin, platform_wallet, price_sol, creator_bps, platform_bps)
+        instructions::admin::initialize_platform(
+            ctx,
+            admin,
+            platform_wallet,
+            price_sol,
+            creator_bps,
+            platform_bps,
+        )
     }
 
     /// Platform Admin: Update global configuration (Prices, Splits, etc)
@@ -38,7 +42,15 @@ pub mod verta_core {
         new_platform_bps: Option<u16>,
         paused: Option<bool>,
     ) -> Result<()> {
-        instructions::admin::update_platform_config(ctx, new_admin, new_wallet, new_price, new_creator_bps, new_platform_bps, paused)
+        instructions::admin::update_platform_config(
+            ctx,
+            new_admin,
+            new_wallet,
+            new_price,
+            new_creator_bps,
+            new_platform_bps,
+            paused,
+        )
     }
 
     /// Platform Admin: Register a new series and set its specific royalty split
@@ -51,7 +63,15 @@ pub mod verta_core {
         platform_bps: u16,
         active: bool,
     ) -> Result<()> {
-        instructions::series::create_title_config(ctx, title_id, authority, creator_wallet, creator_bps, platform_bps, active)
+        instructions::series::create_title_config(
+            ctx,
+            title_id,
+            authority,
+            creator_wallet,
+            creator_bps,
+            platform_bps,
+            active,
+        )
     }
 
     /// Platform Admin: Update series configuration
@@ -63,7 +83,14 @@ pub mod verta_core {
         new_platform_bps: Option<u16>,
         new_active: Option<bool>,
     ) -> Result<()> {
-        instructions::series::update_title_config(ctx, new_authority, new_creator_wallet, new_creator_bps, new_platform_bps, new_active)
+        instructions::series::update_title_config(
+            ctx,
+            new_authority,
+            new_creator_wallet,
+            new_creator_bps,
+            new_platform_bps,
+            new_active,
+        )
     }
 
     /// User: Initialize personal SOL vault
@@ -82,7 +109,11 @@ pub mod verta_core {
     }
 
     /// User: Authorize/Deauthorize a backend delegate
-    pub fn set_vault_delegate(ctx: Context<SetVaultDelegate>, delegate: Pubkey, enabled: bool) -> Result<()> {
+    pub fn set_vault_delegate(
+        ctx: Context<SetVaultDelegate>,
+        delegate: Pubkey,
+        enabled: bool,
+    ) -> Result<()> {
         instructions::vault::set_vault_delegate(ctx, delegate, enabled)
     }
 
@@ -98,16 +129,29 @@ pub mod verta_core {
 
     /// Admin: Initialize a new crowdfunding campaign
     pub fn initialize_crowdfund(
-        ctx: Context<InitializeCrowdfund>, 
-        series_id: String, 
-        goal: u64, 
-        deadline: i64, 
+        ctx: Context<InitializeCrowdfund>,
+        series_id: String,
+        goal: u64,
+        deadline: i64,
         production_wallet: Pubkey,
-        investor_share_bps: u16
+        backer_revenue_bps: u16,
     ) -> Result<()> {
-        instructions::crowdfunding::initialize_crowdfund(ctx, series_id, goal, deadline, production_wallet, investor_share_bps)
+        instructions::crowdfunding::initialize_crowdfund(
+            ctx,
+            series_id,
+            goal,
+            deadline,
+            production_wallet,
+            backer_revenue_bps,
+        )
     }
 
+    /// Admin: Create the global Metaplex Core collection for Revenue Share Passes
+    pub fn create_revenue_share_collection(
+        ctx: Context<CreateRevenueShareCollection>,
+    ) -> Result<()> {
+        instructions::crowdfunding::create_revenue_share_collection(ctx)
+    }
 
     /// User: Contribute $SOL to a crowdfunding campaign
     pub fn contribute(ctx: Context<Contribute>, amount: u64) -> Result<()> {
@@ -119,9 +163,14 @@ pub mod verta_core {
         instructions::crowdfunding::finalize_campaign(ctx)
     }
 
-    /// Admin: Mark a campaign as failed (enabling refunds)
-    pub fn fail_campaign(ctx: Context<FinalizeCampaign>) -> Result<()> {
+    /// Admin: Mark a campaign as failed after its deadline (enabling refunds)
+    pub fn fail_campaign(ctx: Context<HaltCampaign>) -> Result<()> {
         instructions::crowdfunding::fail_campaign(ctx)
+    }
+
+    /// Admin: Cancel an active campaign (enabling refunds)
+    pub fn cancel_campaign(ctx: Context<HaltCampaign>) -> Result<()> {
+        instructions::crowdfunding::cancel_campaign(ctx)
     }
 
     /// User: Claim refund from a failed campaign
@@ -129,16 +178,18 @@ pub mod verta_core {
         instructions::crowdfunding::refund(ctx)
     }
 
-    /// User: Claim their proportional equity NFT after a successful campaign
-    pub fn claim_equity_nft(ctx: Context<ClaimEquityNft>) -> Result<()> {
-        instructions::crowdfunding::claim_equity_nft(ctx)
+    /// User: Mint their Revenue Share Pass after a successful campaign
+    pub fn mint_revenue_share(ctx: Context<MintRevenueShare>) -> Result<()> {
+        instructions::crowdfunding::mint_revenue_share(ctx)
     }
 
-    /// User: Claim their share of accumulated revenue using their Equity NFT
+    /// Backend: Record graduated crowdfund revenue through the delegated unlock path
+    pub fn record_revenue(ctx: Context<RecordRevenue>, amount: u64) -> Result<()> {
+        instructions::crowdfunding::record_revenue(ctx, amount)
+    }
+
+    /// User: Claim their share of accumulated revenue using their Revenue Share Pass
     pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
         instructions::crowdfunding::claim_revenue(ctx)
     }
 }
-
-
-

@@ -5,23 +5,27 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-verta_core = "9o42AnCRp9cnpEzA8np5MKxpstoRG2v9DosaKBn6t7Pe"
-
 [programs.devnet]
-verta_core = "9o42AnCRp9cnpEzA8np5MKxpstoRG2v9DosaKBn6t7Pe"
+verta_core = "D2FTBiHZkkaGAQzLcivACqEuZnSAKatZzCg8ej5bVzUT"
+
+[programs.localnet]
+verta_core = "D2FTBiHZkkaGAQzLcivACqEuZnSAKatZzCg8ej5bVzUT"
 
 [registry]
 url = "https://api.apr.dev"
 
-# localnet so `anchor test` spins a throwaway local validator instead of
-# deploying to devnet. Deploys stay explicit:
-#   anchor deploy --provider.cluster devnet
 [provider]
 cluster = "localnet"
-
-
-wallet = "/Users/jessebias/.config/solana/jbias.json"
+wallet = "~/.config/solana/jbias.json"
 
 [scripts]
 test = "node scripts/run-tests.js"
+
+[test]
+startup_wait = 5000
+shutdown_wait = 2000
+upgradeable = false
+
+[[test.genesis]]
+address = "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"
+program = "tests/fixtures/mpl_core.so"
