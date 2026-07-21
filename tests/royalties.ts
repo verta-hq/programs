@@ -9,6 +9,14 @@ import {
   Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
+import {
+  TOKEN_PROGRAM_ID,
+  createMint,
+  getAccount,
+  getAssociatedTokenAddressSync,
+  getOrCreateAssociatedTokenAccount,
+  mintTo,
+} from "@solana/spl-token";
 import { VertaCore } from "../target/types/verta_core";
 
 describe("verta_core royalties", () => {
@@ -70,6 +78,13 @@ describe("verta_core royalties", () => {
   function revenueVaultPda(campaign: PublicKey): [PublicKey, number] {
     return PublicKey.findProgramAddressSync(
       [Buffer.from("revenue_vault"), campaign.toBuffer()],
+      program.programId
+    );
+  }
+
+  function escrowVaultPda(campaign: PublicKey): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow_vault"), campaign.toBuffer()],
       program.programId
     );
   }
@@ -158,15 +173,44 @@ describe("verta_core royalties", () => {
     }
   }
 
+  // Test USDC mint (6 dp); created in before(), admin = mint authority.
+  let usdcMint: PublicKey;
+
+  function usdcAta(owner: PublicKey): PublicKey {
+    return getAssociatedTokenAddressSync(usdcMint, owner);
+  }
+
+  async function fundUsdc(owner: PublicKey, amount: number): Promise<PublicKey> {
+    const ata = await getOrCreateAssociatedTokenAccount(
+      connection,
+      admin,
+      usdcMint,
+      owner
+    );
+    if (amount > 0) {
+      await mintTo(connection, admin, usdcMint, ata.address, admin, amount);
+    }
+    return ata.address;
+  }
+
+  async function tokenBalance(ata: PublicKey): Promise<number> {
+    try {
+      return Number((await getAccount(connection, ata)).amount);
+    } catch {
+      return 0;
+    }
+  }
+
   async function initializeCampaign(
     seriesId: string,
     goal: anchor.BN,
     deadline: anchor.BN,
     productionAddress = productionWallet.publicKey,
     backerBps = backerRevenueBps
-  ): Promise<{ campaign: PublicKey; vault: PublicKey }> {
+  ): Promise<{ campaign: PublicKey; vault: PublicKey; escrow: PublicKey }> {
     const [campaign] = crowdfundPda(seriesId);
     const [vault] = revenueVaultPda(campaign);
+    const [escrow] = escrowVaultPda(campaign);
 
     await program.methods
       .initializeCrowdfund(
@@ -178,15 +222,18 @@ describe("verta_core royalties", () => {
       )
       .accounts({
         crowdfund: campaign,
+        mint: usdcMint,
+        escrowVault: escrow,
         revenueVault: vault,
         admin: admin.publicKey,
         platformConfig,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([admin])
       .rpc();
 
-    return { campaign, vault };
+    return { campaign, vault, escrow };
   }
 
   async function contributeToCampaign(
@@ -195,6 +242,8 @@ describe("verta_core royalties", () => {
     amount: anchor.BN
   ): Promise<PublicKey> {
     const [contribution] = contributionPda(campaign, userKeypair.publicKey);
+    const [escrow] = escrowVaultPda(campaign);
+    const userAta = await fundUsdc(userKeypair.publicKey, amount.toNumber());
 
     await program.methods
       .contribute(amount)
@@ -202,6 +251,10 @@ describe("verta_core royalties", () => {
         crowdfund: campaign,
         contribution,
         user: userKeypair.publicKey,
+        payer: userKeypair.publicKey,
+        userAta,
+        escrowVault: escrow,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([userKeypair])
@@ -214,16 +267,43 @@ describe("verta_core royalties", () => {
     campaign: PublicKey,
     productionAddress = productionWallet.publicKey
   ): Promise<void> {
+    const [escrow] = escrowVaultPda(campaign);
+    const productionAta = await fundUsdc(productionAddress, 0);
     await program.methods
       .finalizeCampaign()
       .accounts({
         crowdfund: campaign,
         admin: admin.publicKey,
         platformConfig,
-        productionWallet: productionAddress,
+        escrowVault: escrow,
+        productionAta,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([admin])
+      .rpc();
+  }
+
+  async function depositRevenue(
+    campaign: PublicKey,
+    amount: anchor.BN,
+    signer: Keypair = admin
+  ): Promise<void> {
+    const [vault] = revenueVaultPda(campaign);
+    const adminAta = await fundUsdc(signer.publicKey, amount.toNumber());
+    const productionAta = await fundUsdc(productionWallet.publicKey, 0);
+    await program.methods
+      .depositRevenue(amount)
+      .accounts({
+        platformConfig,
+        admin: signer.publicKey,
+        adminAta,
+        crowdfund: campaign,
+        revenueVault: vault,
+        productionAta,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .signers([signer])
       .rpc();
   }
 
@@ -269,6 +349,7 @@ describe("verta_core royalties", () => {
         contribution,
         position,
         user: holder.publicKey,
+        payer: holder.publicKey,
         asset: asset.publicKey,
         collection: revenueShareCollection.publicKey,
         platformConfig,
@@ -327,6 +408,25 @@ describe("verta_core royalties", () => {
         buyer.publicKey,
         outsider.publicKey,
       ].map((wallet) => airdrop(wallet, 20))
+    );
+
+    usdcMint = await createMint(
+      connection,
+      admin,
+      admin.publicKey,
+      null,
+      6
+    );
+    // Pre-create ATAs for every actor that receives USDC.
+    await Promise.all(
+      [
+        backer.publicKey,
+        secondBacker.publicKey,
+        buyer.publicKey,
+        outsider.publicKey,
+        productionWallet.publicKey,
+        admin.publicKey,
+      ].map((wallet) => fundUsdc(wallet, 0))
     );
   });
 
@@ -590,51 +690,31 @@ describe("verta_core royalties", () => {
       .rpc();
   });
 
-  it("accrues crowdfund revenue when the creator wallet is the crowdfund PDA", async () => {
-    const goal = new anchor.BN(2 * LAMPORTS_PER_SOL);
+  it("deposit_revenue accrues USDC backer revenue and pays the production split", async () => {
+    const goal = new anchor.BN(2 * LAMPORTS_PER_SOL); // 2000 USDC (micro units)
     const contributionAmount = goal;
     const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3_600);
 
-    await program.methods
-      .initializeCrowdfund(
-        crowdfundTitleId,
-        goal,
-        deadline,
-        productionWallet.publicKey,
-        backerRevenueBps
-      )
-      .accounts({
-        crowdfund,
-        revenueVault,
-        admin: admin.publicKey,
-        platformConfig,
-        systemProgram: SystemProgram.programId,
-      } as any)
-      .signers([admin])
-      .rpc();
+    await initializeCampaign(crowdfundTitleId, goal, deadline);
+    const backerAtaBefore = await tokenBalance(usdcAta(backer.publicKey));
+    await contributeToCampaign(crowdfund, backer, contributionAmount);
+    // Contribution moved through the backer ATA into escrow
+    expect(await tokenBalance(usdcAta(backer.publicKey))).to.equal(
+      backerAtaBefore
+    );
+    const [escrow] = escrowVaultPda(crowdfund);
+    expect(await tokenBalance(escrow)).to.equal(contributionAmount.toNumber());
 
-    await program.methods
-      .contribute(contributionAmount)
-      .accounts({
-        crowdfund,
-        contribution: backerContribution,
-        user: backer.publicKey,
-        systemProgram: SystemProgram.programId,
-      } as any)
-      .signers([backer])
-      .rpc();
-
-    await program.methods
-      .finalizeCampaign()
-      .accounts({
-        crowdfund,
-        admin: admin.publicKey,
-        platformConfig,
-        productionWallet: productionWallet.publicKey,
-        systemProgram: SystemProgram.programId,
-      } as any)
-      .signers([admin])
-      .rpc();
+    const productionBefore = await tokenBalance(
+      usdcAta(productionWallet.publicKey)
+    );
+    await finalizeCampaign(crowdfund);
+    // Escrow drained to the production wallet at finalize
+    expect(await tokenBalance(escrow)).to.equal(0);
+    expect(
+      (await tokenBalance(usdcAta(productionWallet.publicKey))) -
+        productionBefore
+    ).to.equal(contributionAmount.toNumber());
 
     await program.methods
       .createTitleConfig(
@@ -654,41 +734,32 @@ describe("verta_core royalties", () => {
       .signers([admin])
       .rpc();
 
+    // Settlement sweep deposits the creator share of an episode unlock.
+    const creatorRevenue = new anchor.BN(creatorShare(priceSol));
     const beforePayout = await program.account.crowdfund.fetch(crowdfund);
-    const beforeVault = await balance(revenueVault);
-    const beforeProduction = await balance(productionWallet.publicKey);
+    const beforeVault = await tokenBalance(revenueVault);
+    const beforeProduction = await tokenBalance(
+      usdcAta(productionWallet.publicKey)
+    );
 
-    await program.methods
-      .directPayout("ep_crowdfund_revenue")
-      .accounts({
-        platformConfig,
-        titleConfig: crowdfundTitleConfig,
-        userVault,
-        creatorWallet: crowdfund,
-        crowdfund,
-        revenueVault,
-        productionWallet: productionWallet.publicKey,
-        platformWallet: platformWallet.publicKey,
-        delegate: delegate.publicKey,
-        systemProgram: SystemProgram.programId,
-      } as any)
-      .signers([delegate])
-      .rpc();
+    await depositRevenue(crowdfund, creatorRevenue);
 
     const afterPayout = await program.account.crowdfund.fetch(crowdfund);
-    const creatorRevenue = creatorShare(priceSol);
     const backerPortion = Math.floor(
-      (creatorRevenue * backerRevenueBps) / 10_000
+      (creatorRevenue.toNumber() * backerRevenueBps) / 10_000
     );
-    const productionPortion = creatorRevenue - backerPortion;
+    const productionPortion = creatorRevenue.toNumber() - backerPortion;
     const expectedAccumulatorDelta = new anchor.BN(backerPortion)
       .mul(scale)
       .divn(backerRevenueBps);
 
     expect(afterPayout.status).to.deep.equal({ succeeded: {} });
-    expect((await balance(revenueVault)) - beforeVault).to.equal(backerPortion);
+    expect((await tokenBalance(revenueVault)) - beforeVault).to.equal(
+      backerPortion
+    );
     expect(
-      (await balance(productionWallet.publicKey)) - beforeProduction
+      (await tokenBalance(usdcAta(productionWallet.publicKey))) -
+        beforeProduction
     ).to.equal(productionPortion);
     expect(afterPayout.cumulativeRevenuePerBps.toString()).to.equal(
       beforePayout.cumulativeRevenuePerBps
@@ -703,9 +774,12 @@ describe("verta_core royalties", () => {
       backerContribution,
       backer
     );
-    const beforeBuyer = await balance(buyer.publicKey);
-    const beforeVault = await balance(revenueVault);
-    const beforeEscrow = await balance(crowdfund);
+    const buyerAta = usdcAta(buyer.publicKey);
+    const backerAta = usdcAta(backer.publicKey);
+    const [escrow] = escrowVaultPda(crowdfund);
+    const beforeBuyer = await tokenBalance(buyerAta);
+    const beforeVault = await tokenBalance(revenueVault);
+    const beforeEscrow = await tokenBalance(escrow);
 
     await transferRevenueShare(asset.publicKey, backer, buyer.publicKey);
 
@@ -719,6 +793,8 @@ describe("verta_core royalties", () => {
             position,
             asset: asset.publicKey,
             user: backer.publicKey,
+            userAta: backerAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([backer])
@@ -734,6 +810,8 @@ describe("verta_core royalties", () => {
         position,
         asset: asset.publicKey,
         user: buyer.publicKey,
+        userAta: buyerAta,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([buyer])
@@ -742,11 +820,13 @@ describe("verta_core royalties", () => {
     const expectedClaim = Math.floor(
       (creatorShare(priceSol) * backerRevenueBps) / 10_000
     );
-    expect((await balance(buyer.publicKey)) - beforeBuyer).to.equal(
+    expect((await tokenBalance(buyerAta)) - beforeBuyer).to.equal(
       expectedClaim
     );
-    expect(beforeVault - (await balance(revenueVault))).to.equal(expectedClaim);
-    expect(await balance(crowdfund)).to.equal(beforeEscrow);
+    expect(beforeVault - (await tokenBalance(revenueVault))).to.equal(
+      expectedClaim
+    );
+    expect(await tokenBalance(escrow)).to.equal(beforeEscrow);
 
     await expectAnchorError(
       () =>
@@ -758,6 +838,8 @@ describe("verta_core royalties", () => {
             position,
             asset: asset.publicKey,
             user: buyer.publicKey,
+            userAta: buyerAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([buyer])
@@ -765,27 +847,12 @@ describe("verta_core royalties", () => {
       "NoRevenueToClaim"
     );
 
-    const beforeDeltaBuyer = await balance(buyer.publicKey);
-    const beforeDeltaVault = await balance(revenueVault);
+    const beforeDeltaBuyer = await tokenBalance(buyerAta);
+    const beforeDeltaVault = await tokenBalance(revenueVault);
 
-    await program.methods
-      .directPayout("ep_crowdfund_revenue_delta")
-      .accounts({
-        platformConfig,
-        titleConfig: crowdfundTitleConfig,
-        userVault,
-        creatorWallet: crowdfund,
-        crowdfund,
-        revenueVault,
-        productionWallet: productionWallet.publicKey,
-        platformWallet: platformWallet.publicKey,
-        delegate: delegate.publicKey,
-        systemProgram: SystemProgram.programId,
-      } as any)
-      .signers([delegate])
-      .rpc();
+    await depositRevenue(crowdfund, new anchor.BN(creatorShare(priceSol)));
 
-    expect((await balance(revenueVault)) - beforeDeltaVault).to.equal(
+    expect((await tokenBalance(revenueVault)) - beforeDeltaVault).to.equal(
       expectedClaim
     );
 
@@ -797,15 +864,17 @@ describe("verta_core royalties", () => {
         position,
         asset: asset.publicKey,
         user: buyer.publicKey,
+        userAta: buyerAta,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([buyer])
       .rpc();
 
-    expect((await balance(buyer.publicKey)) - beforeDeltaBuyer).to.equal(
+    expect((await tokenBalance(buyerAta)) - beforeDeltaBuyer).to.equal(
       expectedClaim
     );
-    expect(await balance(crowdfund)).to.equal(beforeEscrow);
+    expect(await tokenBalance(escrow)).to.equal(beforeEscrow);
   });
 
   it("keeps overfunded minted shares within the campaign backer revenue cap", async () => {
@@ -879,6 +948,8 @@ describe("verta_core royalties", () => {
             position,
             asset: asset.publicKey,
             user: backer.publicKey,
+            userAta: usdcAta(backer.publicKey),
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([backer])
@@ -910,21 +981,9 @@ describe("verta_core royalties", () => {
       secondAmount
     );
     await finalizeCampaign(campaign);
-    const config = await createCrowdfundTitle(seriesId, campaign);
+    await createCrowdfundTitle(seriesId, campaign);
 
-    await program.methods
-      .recordRevenue(revenueAmount)
-      .accounts({
-        platformConfig,
-        titleConfig: config,
-        userVault,
-        crowdfund: campaign,
-        revenueVault: vault,
-        productionWallet: productionWallet.publicKey,
-        delegate: delegate.publicKey,
-      } as any)
-      .signers([delegate])
-      .rpc();
+    await depositRevenue(campaign, revenueAmount);
 
     const firstShare = await mintShare(campaign, firstContribution, backer);
     const secondShare = await mintShare(
@@ -943,9 +1002,9 @@ describe("verta_core royalties", () => {
     );
     const expectedFirst = Math.floor(expectedBackerPool * 0.3);
     const expectedSecond = expectedBackerPool - expectedFirst;
-    const beforeFirst = await balance(backer.publicKey);
-    const beforeSecond = await balance(secondBacker.publicKey);
-    const beforeVault = await balance(vault);
+    const beforeFirst = await tokenBalance(usdcAta(backer.publicKey));
+    const beforeSecond = await tokenBalance(usdcAta(secondBacker.publicKey));
+    const beforeVault = await tokenBalance(vault);
 
     expect(firstPosition.shareBps).to.equal(900);
     expect(secondPosition.shareBps).to.equal(2100);
@@ -958,6 +1017,8 @@ describe("verta_core royalties", () => {
         position: firstShare.position,
         asset: firstShare.asset.publicKey,
         user: backer.publicKey,
+        userAta: usdcAta(backer.publicKey),
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([backer])
@@ -971,18 +1032,22 @@ describe("verta_core royalties", () => {
         position: secondShare.position,
         asset: secondShare.asset.publicKey,
         user: secondBacker.publicKey,
+        userAta: usdcAta(secondBacker.publicKey),
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([secondBacker])
       .rpc();
 
-    expect((await balance(backer.publicKey)) - beforeFirst).to.equal(
-      expectedFirst
+    expect(
+      (await tokenBalance(usdcAta(backer.publicKey))) - beforeFirst
+    ).to.equal(expectedFirst);
+    expect(
+      (await tokenBalance(usdcAta(secondBacker.publicKey))) - beforeSecond
+    ).to.equal(expectedSecond);
+    expect(beforeVault - (await tokenBalance(vault))).to.equal(
+      expectedBackerPool
     );
-    expect((await balance(secondBacker.publicKey)) - beforeSecond).to.equal(
-      expectedSecond
-    );
-    expect(beforeVault - (await balance(vault))).to.equal(expectedBackerPool);
   });
 
   it("keeps accumulator drift bounded across many small revenue events", async () => {
@@ -996,34 +1061,23 @@ describe("verta_core royalties", () => {
     );
     const contribution = await contributeToCampaign(campaign, backer, goal);
     await finalizeCampaign(campaign);
-    const config = await createCrowdfundTitle(seriesId, campaign);
+    await createCrowdfundTitle(seriesId, campaign);
     const { asset, position } = await mintShare(campaign, contribution, backer);
     const events = 25;
     const amount = new anchor.BN(7);
     const expectedBackerPortionPerEvent = Math.floor(
       (amount.toNumber() * backerRevenueBps) / 10_000
     );
-    const beforeVault = await balance(vault);
-    const beforeBacker = await balance(backer.publicKey);
+    const backerAta = usdcAta(backer.publicKey);
+    const beforeVault = await tokenBalance(vault);
+    const beforeBacker = await tokenBalance(backerAta);
 
     for (let i = 0; i < events; i += 1) {
-      await program.methods
-        .recordRevenue(amount)
-        .accounts({
-          platformConfig,
-          titleConfig: config,
-          userVault,
-          crowdfund: campaign,
-          revenueVault: vault,
-          productionWallet: productionWallet.publicKey,
-          delegate: delegate.publicKey,
-        } as any)
-        .signers([delegate])
-        .rpc();
+      await depositRevenue(campaign, amount);
     }
 
     const totalBackerPool = expectedBackerPortionPerEvent * events;
-    expect((await balance(vault)) - beforeVault).to.equal(totalBackerPool);
+    expect((await tokenBalance(vault)) - beforeVault).to.equal(totalBackerPool);
 
     await program.methods
       .claimRevenue()
@@ -1033,13 +1087,15 @@ describe("verta_core royalties", () => {
         position,
         asset: asset.publicKey,
         user: backer.publicKey,
+        userAta: backerAta,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([backer])
       .rpc();
 
-    const claimed = (await balance(backer.publicKey)) - beforeBacker;
-    const remaining = (await balance(vault)) - beforeVault;
+    const claimed = (await tokenBalance(backerAta)) - beforeBacker;
+    const remaining = (await tokenBalance(vault)) - beforeVault;
     expect(totalBackerPool - claimed).to.be.at.most(1);
     expect(remaining).to.be.at.least(0);
     expect(remaining).to.be.at.most(1);
@@ -1056,6 +1112,8 @@ describe("verta_core royalties", () => {
             position: backerContribution,
             asset: outsider.publicKey,
             user: outsider.publicKey,
+            userAta: usdcAta(outsider.publicKey),
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([outsider])
@@ -1079,8 +1137,10 @@ describe("verta_core royalties", () => {
       backer,
       contributionAmount
     );
-    const beforeVault = await balance(vault);
-    const beforeCampaign = await balance(campaign);
+    const [escrow] = escrowVaultPda(campaign);
+    const backerAta = usdcAta(backer.publicKey);
+    const beforeVault = await tokenBalance(vault);
+    const beforeEscrow = await tokenBalance(escrow);
 
     await sleep(2_000);
 
@@ -1094,7 +1154,7 @@ describe("verta_core royalties", () => {
       .signers([admin])
       .rpc();
 
-    const beforeBacker = await balance(backer.publicKey);
+    const beforeBacker = await tokenBalance(backerAta);
 
     await program.methods
       .refund()
@@ -1102,24 +1162,22 @@ describe("verta_core royalties", () => {
         crowdfund: campaign,
         contribution,
         user: backer.publicKey,
+        userAta: backerAta,
+        escrowVault: escrow,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([backer])
       .rpc();
 
-    expect(beforeCampaign - (await balance(campaign))).to.equal(
+    expect(beforeEscrow - (await tokenBalance(escrow))).to.equal(
       contributionAmount.toNumber()
     );
-    expect((await balance(backer.publicKey)) - beforeBacker).to.be.at.least(
+    expect((await tokenBalance(backerAta)) - beforeBacker).to.equal(
       contributionAmount.toNumber()
     );
     expect(await connection.getAccountInfo(contribution)).to.equal(null);
-    expect(await balance(vault)).to.equal(beforeVault);
-
-    const rentMinimum = await connection.getMinimumBalanceForRentExemption(
-      program.account.crowdfund.size
-    );
-    expect(await balance(campaign)).to.be.at.least(rentMinimum);
+    expect(await tokenBalance(vault)).to.equal(beforeVault);
 
     await expectAnchorError(
       () =>
@@ -1129,6 +1187,9 @@ describe("verta_core royalties", () => {
             crowdfund: campaign,
             contribution,
             user: backer.publicKey,
+            userAta: backerAta,
+            escrowVault: escrow,
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([backer])
@@ -1152,8 +1213,10 @@ describe("verta_core royalties", () => {
       secondBacker,
       contributionAmount
     );
-    const beforeVault = await balance(vault);
-    const beforeCampaign = await balance(campaign);
+    const [escrow] = escrowVaultPda(campaign);
+    const secondBackerAta = usdcAta(secondBacker.publicKey);
+    const beforeVault = await tokenBalance(vault);
+    const beforeEscrow = await tokenBalance(escrow);
 
     await program.methods
       .cancelCampaign()
@@ -1173,6 +1236,10 @@ describe("verta_core royalties", () => {
             crowdfund: campaign,
             contribution,
             user: secondBacker.publicKey,
+            payer: secondBacker.publicKey,
+            userAta: secondBackerAta,
+            escrowVault: escrow,
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([secondBacker])
@@ -1180,7 +1247,7 @@ describe("verta_core royalties", () => {
       "CampaignInactive"
     );
 
-    const beforeBacker = await balance(secondBacker.publicKey);
+    const beforeBacker = await tokenBalance(secondBackerAta);
 
     await program.methods
       .refund()
@@ -1188,88 +1255,63 @@ describe("verta_core royalties", () => {
         crowdfund: campaign,
         contribution,
         user: secondBacker.publicKey,
+        userAta: secondBackerAta,
+        escrowVault: escrow,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
       .signers([secondBacker])
       .rpc();
 
-    expect(beforeCampaign - (await balance(campaign))).to.equal(
+    expect(beforeEscrow - (await tokenBalance(escrow))).to.equal(
       contributionAmount.toNumber()
     );
-    expect(
-      (await balance(secondBacker.publicKey)) - beforeBacker
-    ).to.be.at.least(contributionAmount.toNumber());
-    expect(await balance(vault)).to.equal(beforeVault);
+    expect((await tokenBalance(secondBackerAta)) - beforeBacker).to.equal(
+      contributionAmount.toNumber()
+    );
+    expect(await tokenBalance(vault)).to.equal(beforeVault);
   });
 
-  it("requires the configured delegate to record revenue", async () => {
+  it("requires the platform admin to deposit revenue", async () => {
     await expectAnchorError(
-      () =>
-        program.methods
-          .recordRevenue(new anchor.BN(1))
-          .accounts({
-            platformConfig,
-            titleConfig: crowdfundTitleConfig,
-            userVault,
-            crowdfund,
-            revenueVault,
-            productionWallet: productionWallet.publicKey,
-            delegate: outsider.publicKey,
-          } as any)
-          .signers([outsider])
-          .rpc(),
-      "OnlyDelegate"
+      () => depositRevenue(crowdfund, new anchor.BN(1), outsider),
+      "Unauthorized"
     );
   });
 
-  it("record_revenue pays the production split directly and isolates vault balances", async () => {
+  it("deposit_revenue pays the production split directly and isolates vault balances", async () => {
     const seriesId = "record_revenue_split";
     const goal = new anchor.BN(LAMPORTS_PER_SOL);
     const contributionAmount = goal;
     const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 3_600);
-    const { campaign, vault } = await initializeCampaign(
+    const { campaign, vault, escrow } = await initializeCampaign(
       seriesId,
       goal,
       deadline
     );
     await contributeToCampaign(campaign, backer, contributionAmount);
     await finalizeCampaign(campaign);
-    const config = await createCrowdfundTitle(seriesId, campaign);
+    await createCrowdfundTitle(seriesId, campaign);
     const amount = new anchor.BN(1_000_000);
-    const beforeUserVault = await balance(userVault);
-    const beforeRevenueVault = await balance(vault);
-    const beforeProduction = await balance(productionWallet.publicKey);
-    const beforeCampaign = await balance(campaign);
+    const productionAta = usdcAta(productionWallet.publicKey);
+    const beforeRevenueVault = await tokenBalance(vault);
+    const beforeProduction = await tokenBalance(productionAta);
+    const beforeEscrow = await tokenBalance(escrow);
 
-    await program.methods
-      .recordRevenue(amount)
-      .accounts({
-        platformConfig,
-        titleConfig: config,
-        userVault,
-        crowdfund: campaign,
-        revenueVault: vault,
-        productionWallet: productionWallet.publicKey,
-        delegate: delegate.publicKey,
-      } as any)
-      .signers([delegate])
-      .rpc();
+    await depositRevenue(campaign, amount);
 
     const expectedBackerPortion = Math.floor(
       (amount.toNumber() * backerRevenueBps) / 10_000
     );
     const expectedProductionPortion = amount.toNumber() - expectedBackerPortion;
 
-    expect(beforeUserVault - (await balance(userVault))).to.equal(
-      amount.toNumber()
-    );
-    expect((await balance(vault)) - beforeRevenueVault).to.equal(
+    expect((await tokenBalance(vault)) - beforeRevenueVault).to.equal(
       expectedBackerPortion
     );
-    expect(
-      (await balance(productionWallet.publicKey)) - beforeProduction
-    ).to.equal(expectedProductionPortion);
-    expect(await balance(campaign)).to.equal(beforeCampaign);
+    expect((await tokenBalance(productionAta)) - beforeProduction).to.equal(
+      expectedProductionPortion
+    );
+    expect(await tokenBalance(escrow)).to.equal(beforeEscrow);
   });
 
   it("rejects repeated finalization, fail-after-finalize, and late contributions", async () => {
@@ -1285,18 +1327,7 @@ describe("verta_core royalties", () => {
     await finalizeCampaign(campaign);
 
     await expectAnchorError(
-      () =>
-        program.methods
-          .finalizeCampaign()
-          .accounts({
-            crowdfund: campaign,
-            admin: admin.publicKey,
-            platformConfig,
-            productionWallet: productionWallet.publicKey,
-            systemProgram: SystemProgram.programId,
-          } as any)
-          .signers([admin])
-          .rpc(),
+      () => finalizeCampaign(campaign),
       "CampaignInactive"
     );
 
@@ -1336,6 +1367,10 @@ describe("verta_core royalties", () => {
             crowdfund: lateCampaign.campaign,
             contribution: lateContribution,
             user: outsider.publicKey,
+            payer: outsider.publicKey,
+            userAta: usdcAta(outsider.publicKey),
+            escrowVault: escrowVaultPda(lateCampaign.campaign)[0],
+            tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
           } as any)
           .signers([outsider])

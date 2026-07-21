@@ -66,18 +66,19 @@ pub enum CrowdfundStatus {
 pub struct Crowdfund {
     #[max_len(32)]
     pub series_id: String, // Matches TitleConfig title_id
-    pub goal: u64,
-    pub total_raised: u64,
+    pub goal: u64,         // micro-USDC (6 dp)
+    pub total_raised: u64, // micro-USDC
     pub deadline: i64,
     pub production_wallet: Pubkey,
     pub backer_revenue_bps: u16, // Share of revenue reserved for backers (BPS)
     pub status: CrowdfundStatus,
     pub bump: u8,
     // Revenue accumulator (frozen denominators set at finalize; SCALE-scaled)
-    pub cumulative_revenue_per_bps: u128,
+    pub cumulative_revenue_per_bps: u128, // micro-USDC × SCALE / bps
     pub total_issued_bps: u16,
     pub accumulator_at_finalize: u128,
     pub collection: Pubkey, // Global "Verta Revenue Shares" Core collection
+    pub mint: Pubkey,       // Settlement token (USDC); escrow + revenue vaults hold this
 }
 
 #[account]

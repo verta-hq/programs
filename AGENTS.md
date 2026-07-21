@@ -40,26 +40,35 @@ Anchor uses **yarn** and wallet `~/.config/solana/jbias.json` (see
   (no receipt). When a title has graduated from launchpad, both require typed
   crowdfund revenue accounts and route the creator share through
   `record_revenue` logic into the revenue vault / production split.
-- **crowdfunding** — `create_revenue_share_collection` (one-time global Core
-  collection) · `initialize_crowdfund` → `contribute` →
-  `finalize_campaign`/`fail_campaign`/`cancel_campaign` →
-  `refund`/`mint_revenue_share` → `record_revenue`/`claim_revenue`
+- **crowdfunding (USDC)** — `create_revenue_share_collection` (one-time
+  global Core collection) · `initialize_crowdfund` (stores `crowdfund.mint`,
+  creates escrow + revenue-vault **token PDAs**, authority = crowdfund PDA) →
+  `contribute` (user ATA → escrow; separate `payer` signer carries rent so
+  the platform can sponsor) → `finalize_campaign` (escrow → production ATA) /
+  `fail_campaign`/`cancel_campaign` → `refund` (escrow → user ATA) /
+  `mint_revenue_share` (also has a sponsored `payer`) →
+  `deposit_revenue` (admin ATA → backer revenue-vault + accumulator bump +
+  production ATA — the settlement-sweep entry point) → `claim_revenue`
+  (revenue-vault → holder ATA). All amounts are micro-USDC (6 dp). The old
+  SOL `record_revenue` (vault-coupled) and autoplay crowdfund routing remain
+  compiled but are dead for token campaigns
 
-## Vault & accounting layout (launchpad)
+## Vault & accounting layout (launchpad, USDC)
 
-- **Escrow** lives in the `crowdfund` PDA (`[b"crowdfund", series_id]`) — holds
-  contributions; drained to the production wallet at `finalize_campaign`;
-  source of `refund` (rent-guarded).
-- **Revenue** lives in a separate `revenue_vault` system PDA
-  (`[b"revenue_vault", crowdfund]`) — holds only the backer share; `record_revenue`
-  deposits into it and bumps `crowdfund.cumulative_revenue_per_bps` atomically,
-  paying the production share straight to the production wallet (no co-mingling).
+- **Escrow** is a token PDA `[b"escrow_vault", crowdfund]` (authority =
+  crowdfund PDA) — holds USDC contributions; drained to the production
+  wallet's ATA at `finalize_campaign`; source of `refund`.
+- **Revenue** is a token PDA `[b"revenue_vault", crowdfund]` — holds only the
+  backer share; `deposit_revenue` (platform admin, from the treasury ATA)
+  deposits into it and bumps `crowdfund.cumulative_revenue_per_bps`
+  atomically, paying the production share straight to the production ATA
+  (no co-mingling).
 - **Share accounting** is the program-owned `SharePosition` PDA
   (`[b"position", asset]`, `share_bps` + `claimed_checkpoint`), written once at
   mint and immutable — the Core asset's attributes mirror it for display only and
   are never trusted for payouts. `claim_revenue` pays
-  `share_bps × (cumulative − checkpoint) / SCALE` from `revenue_vault` to the
-  asset's current on-chain owner. `SCALE = 1e12` (`constants.rs`).
+  `share_bps × (cumulative − checkpoint) / SCALE` in USDC from the
+  revenue-vault token PDA to the asset's current on-chain owner's ATA. `SCALE = 1e12` (`constants.rs`).
 
 ## Critical conventions
 

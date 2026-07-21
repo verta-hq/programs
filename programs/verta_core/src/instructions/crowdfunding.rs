@@ -1,11 +1,11 @@
 use crate::constants::{
-    BPS_DENOMINATOR, PLATFORM_AUTHORITY_SEED, REVENUE_VAULT_SEED, SCALE, TITLE_CONFIG_SEED,
-    USER_VAULT_SEED,
+    BPS_DENOMINATOR, ESCROW_VAULT_SEED, PLATFORM_AUTHORITY_SEED, REVENUE_VAULT_SEED, SCALE,
+    TITLE_CONFIG_SEED, USER_VAULT_SEED,
 };
 use crate::errors::VertaError;
 use crate::state::*;
 use anchor_lang::prelude::*;
-use anchor_lang::system_program::{self, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer as TokenTransfer};
 use mpl_core::{
     accounts::BaseAssetV1,
     instructions::{CreateCollectionV1CpiBuilder, CreateV1CpiBuilder},
@@ -55,16 +55,32 @@ pub struct InitializeCrowdfund<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
 
+    /// Settlement mint (USDC). Admin-trusted at init; all campaign token
+    /// accounts are validated against `crowdfund.mint` thereafter.
+    pub mint: Account<'info, Mint>,
+
+    /// Escrow: holds contributions until finalize (→ production ATA) or
+    /// refunds. Authority = crowdfund PDA.
     #[account(
         init,
         payer = admin,
-        space = 0,
-        owner = system_program::ID,
-        seeds = [REVENUE_VAULT_SEED, crowdfund.key().as_ref()],
-        bump
+        seeds = [ESCROW_VAULT_SEED, crowdfund.key().as_ref()],
+        bump,
+        token::mint = mint,
+        token::authority = crowdfund,
     )]
-    /// CHECK: Initialized as a zero-data system-owned PDA; later instructions type-check it as SystemAccount.
-    pub revenue_vault: UncheckedAccount<'info>,
+    pub escrow_vault: Account<'info, TokenAccount>,
+
+    /// Backer revenue pool fed by deposit_revenue; drained by claim_revenue.
+    #[account(
+        init,
+        payer = admin,
+        seeds = [REVENUE_VAULT_SEED, crowdfund.key().as_ref()],
+        bump,
+        token::mint = mint,
+        token::authority = crowdfund,
+    )]
+    pub revenue_vault: Account<'info, TokenAccount>,
 
     #[account(
         seeds = [PLATFORM_AUTHORITY_SEED],
@@ -74,6 +90,7 @@ pub struct InitializeCrowdfund<'info> {
     )]
     pub platform_config: Account<'info, PlatformConfig>,
 
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -90,16 +107,35 @@ pub struct Contribute<'info> {
 
     #[account(
         init_if_needed,
-        payer = user,
+        payer = payer,
         space = 8 + Contribution::INIT_SPACE,
         seeds = [b"contribution", crowdfund.key().as_ref(), user.key().as_ref()],
         bump
     )]
     pub contribution: Account<'info, Contribution>,
 
-    #[account(mut)]
     pub user: Signer<'info>,
 
+    /// Rent payer for the contribution PDA — the platform in the sponsored
+    /// flow (users hold no SOL), or the user themselves when self-paying.
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        mut,
+        constraint = user_ata.owner == user.key() @ VertaError::Unauthorized,
+        constraint = user_ata.mint == crowdfund.mint @ VertaError::InvalidMint,
+    )]
+    pub user_ata: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        seeds = [ESCROW_VAULT_SEED, crowdfund.key().as_ref()],
+        bump,
+    )]
+    pub escrow_vault: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -123,10 +159,23 @@ pub struct FinalizeCampaign<'info> {
     )]
     pub platform_config: Account<'info, PlatformConfig>,
 
-    /// CHECK: Recipient of funds (Production Wallet)
-    #[account(mut, constraint = production_wallet.key() == crowdfund.production_wallet @ VertaError::InvalidRecipient)]
-    pub production_wallet: AccountInfo<'info>,
+    #[account(
+        mut,
+        seeds = [ESCROW_VAULT_SEED, crowdfund.key().as_ref()],
+        bump,
+    )]
+    pub escrow_vault: Account<'info, TokenAccount>,
 
+    /// Production wallet's token account (any account owned by the stored
+    /// production wallet, in the campaign mint).
+    #[account(
+        mut,
+        constraint = production_ata.owner == crowdfund.production_wallet @ VertaError::InvalidRecipient,
+        constraint = production_ata.mint == crowdfund.mint @ VertaError::InvalidMint,
+    )]
+    pub production_ata: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -172,6 +221,21 @@ pub struct Refund<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
+    #[account(
+        mut,
+        constraint = user_ata.owner == user.key() @ VertaError::Unauthorized,
+        constraint = user_ata.mint == crowdfund.mint @ VertaError::InvalidMint,
+    )]
+    pub user_ata: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        seeds = [ESCROW_VAULT_SEED, crowdfund.key().as_ref()],
+        bump,
+    )]
+    pub escrow_vault: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -196,15 +260,19 @@ pub struct MintRevenueShare<'info> {
 
     #[account(
         init,
-        payer = user,
+        payer = payer,
         space = 8 + SharePosition::INIT_SPACE,
         seeds = [b"position", asset.key().as_ref()],
         bump
     )]
     pub position: Account<'info, SharePosition>,
 
-    #[account(mut)]
     pub user: Signer<'info>,
+
+    /// Rent payer for the position PDA + Core asset — the platform in the
+    /// sponsored flow, or the user themselves when self-paying.
+    #[account(mut)]
+    pub payer: Signer<'info>,
 
     #[account(mut)]
     pub asset: Signer<'info>,
@@ -293,7 +361,7 @@ pub struct ClaimRevenue<'info> {
         seeds = [REVENUE_VAULT_SEED, crowdfund.key().as_ref()],
         bump
     )]
-    pub revenue_vault: SystemAccount<'info>,
+    pub revenue_vault: Account<'info, TokenAccount>,
 
     #[account(
         mut,
@@ -311,7 +379,63 @@ pub struct ClaimRevenue<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
+    #[account(
+        mut,
+        constraint = user_ata.owner == user.key() @ VertaError::Unauthorized,
+        constraint = user_ata.mint == crowdfund.mint @ VertaError::InvalidMint,
+    )]
+    pub user_ata: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+}
+
+/// Platform admin deposits episode-revenue creator shares (already collected
+/// in the USDC treasury by the settlement sweep) into a graduated campaign:
+/// the backer portion lands in the revenue vault and advances the
+/// accumulator, the remainder goes straight to the production wallet.
+#[derive(Accounts)]
+pub struct DepositRevenue<'info> {
+    #[account(
+        seeds = [PLATFORM_AUTHORITY_SEED],
+        bump = platform_config.bump,
+        has_one = admin @ VertaError::Unauthorized,
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
+
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        mut,
+        constraint = admin_ata.owner == admin.key() @ VertaError::Unauthorized,
+        constraint = admin_ata.mint == crowdfund.mint @ VertaError::InvalidMint,
+    )]
+    pub admin_ata: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        seeds = [b"crowdfund", crowdfund.series_id.as_bytes()],
+        bump = crowdfund.bump,
+        constraint = crowdfund.status == CrowdfundStatus::Succeeded @ VertaError::CampaignInactive,
+    )]
+    pub crowdfund: Account<'info, Crowdfund>,
+
+    #[account(
+        mut,
+        seeds = [REVENUE_VAULT_SEED, crowdfund.key().as_ref()],
+        bump
+    )]
+    pub revenue_vault: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = production_ata.owner == crowdfund.production_wallet @ VertaError::InvalidRecipient,
+        constraint = production_ata.mint == crowdfund.mint @ VertaError::InvalidMint,
+    )]
+    pub production_ata: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 pub fn initialize_crowdfund(
@@ -335,6 +459,7 @@ pub fn initialize_crowdfund(
     crowdfund.total_issued_bps = 0;
     crowdfund.accumulator_at_finalize = 0;
     crowdfund.collection = ctx.accounts.platform_config.revenue_share_collection;
+    crowdfund.mint = ctx.accounts.mint.key();
     Ok(())
 }
 
@@ -342,15 +467,18 @@ pub fn contribute(ctx: Context<Contribute>, amount: u64) -> Result<()> {
     let crowdfund = &mut ctx.accounts.crowdfund;
     let contribution = &mut ctx.accounts.contribution;
 
-    // 1. Transfer $SOL from user to crowdfund PDA
-    let cpi_context = CpiContext::new(
-        ctx.accounts.system_program.to_account_info(),
-        Transfer {
-            from: ctx.accounts.user.to_account_info(),
-            to: crowdfund.to_account_info(),
-        },
-    );
-    system_program::transfer(cpi_context, amount)?;
+    // 1. Transfer USDC from the user's token account into escrow
+    token::transfer(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            TokenTransfer {
+                from: ctx.accounts.user_ata.to_account_info(),
+                to: ctx.accounts.escrow_vault.to_account_info(),
+                authority: ctx.accounts.user.to_account_info(),
+            },
+        ),
+        amount,
+    )?;
 
     // 2. Update accounts
     crowdfund.total_raised = crowdfund
@@ -399,18 +527,23 @@ pub fn finalize_campaign(ctx: Context<FinalizeCampaign>) -> Result<()> {
     crowdfund.total_issued_bps = crowdfund.backer_revenue_bps;
     crowdfund.accumulator_at_finalize = crowdfund.cumulative_revenue_per_bps;
 
-    // Calculate the SOL amount to release to the production wallet
-    // We must leave the rent-exemption balance in the PDA so it stays alive
-    let current_balance = crowdfund.to_account_info().lamports();
-    let rent_minimum = Rent::get()?.minimum_balance(crowdfund.to_account_info().data_len());
-    let withdrawable = current_balance
-        .checked_sub(rent_minimum)
-        .ok_or(VertaError::MathOverflow)?;
-
+    // Release the full escrow to the production wallet, signed by the
+    // crowdfund PDA (token accounts carry no rent-reserve concern).
+    let withdrawable = ctx.accounts.escrow_vault.amount;
     if withdrawable > 0 {
-        checked_lamport_transfer(
-            &crowdfund.to_account_info(),
-            &ctx.accounts.production_wallet.to_account_info(),
+        let series_id = crowdfund.series_id.clone();
+        let bump = [crowdfund.bump];
+        let seeds: &[&[u8]] = &[b"crowdfund", series_id.as_bytes(), &bump];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TokenTransfer {
+                    from: ctx.accounts.escrow_vault.to_account_info(),
+                    to: ctx.accounts.production_ata.to_account_info(),
+                    authority: crowdfund.to_account_info(),
+                },
+                &[seeds],
+            ),
             withdrawable,
         )?;
     }
@@ -445,33 +578,30 @@ pub fn cancel_campaign(ctx: Context<HaltCampaign>) -> Result<()> {
 }
 
 pub fn refund(ctx: Context<Refund>) -> Result<()> {
-    let crowdfund = &mut ctx.accounts.crowdfund;
-    let contribution = &mut ctx.accounts.contribution;
+    let crowdfund = &ctx.accounts.crowdfund;
+    let contribution = &ctx.accounts.contribution;
 
     let amount = contribution.amount_contributed;
+    require!(
+        ctx.accounts.escrow_vault.amount >= amount,
+        VertaError::InsufficientVaultBalance
+    );
 
-    // Solvency guard: never pay out escrow below the PDA's rent-exempt minimum
-    let crowdfund_info = crowdfund.to_account_info();
-    let rent_minimum = Rent::get()?.minimum_balance(crowdfund_info.data_len());
-    let available = crowdfund_info
-        .lamports()
-        .checked_sub(rent_minimum)
-        .ok_or(VertaError::InsufficientVaultBalance)?;
-    require!(available >= amount, VertaError::InsufficientVaultBalance);
-
-    // Transfer funds from crowdfund PDA to user
-    let new_crowdfund_balance = crowdfund_info
-        .lamports()
-        .checked_sub(amount)
-        .ok_or(VertaError::MathOverflow)?;
-    let new_user_balance = ctx
-        .accounts
-        .user
-        .lamports()
-        .checked_add(amount)
-        .ok_or(VertaError::MathOverflow)?;
-    **crowdfund_info.try_borrow_mut_lamports()? = new_crowdfund_balance;
-    **ctx.accounts.user.try_borrow_mut_lamports()? = new_user_balance;
+    let series_id = crowdfund.series_id.clone();
+    let bump = [crowdfund.bump];
+    let seeds: &[&[u8]] = &[b"crowdfund", series_id.as_bytes(), &bump];
+    token::transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TokenTransfer {
+                from: ctx.accounts.escrow_vault.to_account_info(),
+                to: ctx.accounts.user_ata.to_account_info(),
+                authority: crowdfund.to_account_info(),
+            },
+            &[seeds],
+        ),
+        amount,
+    )?;
 
     Ok(())
 }
@@ -541,7 +671,7 @@ pub fn mint_revenue_share(ctx: Context<MintRevenueShare>) -> Result<()> {
         .asset(&ctx.accounts.asset.to_account_info())
         .collection(Some(&ctx.accounts.collection.to_account_info()))
         .authority(Some(&ctx.accounts.platform_config.to_account_info()))
-        .payer(&ctx.accounts.user.to_account_info())
+        .payer(&ctx.accounts.payer.to_account_info())
         .owner(Some(&ctx.accounts.user.to_account_info()))
         // Core collection assets derive update authority from the collection.
         // The collection itself is program-owned through the PlatformConfig PDA.
@@ -673,29 +803,98 @@ pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
     let claimable = claimable_u128 as u64;
 
     require!(
-        ctx.accounts.revenue_vault.to_account_info().lamports() >= claimable,
+        ctx.accounts.revenue_vault.amount >= claimable,
         VertaError::InsufficientVaultBalance
     );
 
     position.claimed_checkpoint = crowdfund.cumulative_revenue_per_bps;
-    let crowdfund_key = crowdfund.key();
-    let vault_bump = [ctx.bumps.revenue_vault];
-    let vault_seeds: &[&[u8]] = &[REVENUE_VAULT_SEED, crowdfund_key.as_ref(), &vault_bump];
-    let signer_seeds = &[vault_seeds];
+    let series_id = crowdfund.series_id.clone();
+    let bump = [crowdfund.bump];
+    let seeds: &[&[u8]] = &[b"crowdfund", series_id.as_bytes(), &bump];
 
-    system_program::transfer(
+    token::transfer(
         CpiContext::new_with_signer(
-            ctx.accounts.system_program.to_account_info(),
-            Transfer {
+            ctx.accounts.token_program.to_account_info(),
+            TokenTransfer {
                 from: ctx.accounts.revenue_vault.to_account_info(),
-                to: ctx.accounts.user.to_account_info(),
+                to: ctx.accounts.user_ata.to_account_info(),
+                authority: crowdfund.to_account_info(),
             },
-            signer_seeds,
+            &[seeds],
         ),
         claimable,
     )?;
 
-    msg!("Revenue Claimed Successfully: {} lamports", claimable);
+    msg!("Revenue Claimed Successfully: {} micro-USDC", claimable);
+    Ok(())
+}
+
+/// Settlement entry point: splits an episode-revenue creator share between the
+/// backer revenue vault (advancing the accumulator) and the production wallet,
+/// funded from the admin's USDC token account.
+pub fn deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Result<()> {
+    require!(
+        !ctx.accounts.platform_config.paused,
+        VertaError::PlatformPaused
+    );
+    require!(amount > 0, VertaError::InvalidPrice);
+
+    let crowdfund = &mut ctx.accounts.crowdfund;
+
+    let backer_portion = (amount as u128)
+        .checked_mul(crowdfund.backer_revenue_bps as u128)
+        .ok_or(VertaError::MathOverflow)?
+        .checked_div(BPS_DENOMINATOR as u128)
+        .ok_or(VertaError::MathOverflow)? as u64;
+    let production_portion = amount
+        .checked_sub(backer_portion)
+        .ok_or(VertaError::MathOverflow)?;
+
+    if backer_portion > 0 {
+        require!(crowdfund.total_issued_bps > 0, VertaError::MathOverflow);
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                TokenTransfer {
+                    from: ctx.accounts.admin_ata.to_account_info(),
+                    to: ctx.accounts.revenue_vault.to_account_info(),
+                    authority: ctx.accounts.admin.to_account_info(),
+                },
+            ),
+            backer_portion,
+        )?;
+
+        let accumulator_delta = (backer_portion as u128)
+            .checked_mul(SCALE)
+            .ok_or(VertaError::MathOverflow)?
+            .checked_div(crowdfund.total_issued_bps as u128)
+            .ok_or(VertaError::MathOverflow)?;
+        crowdfund.cumulative_revenue_per_bps = crowdfund
+            .cumulative_revenue_per_bps
+            .checked_add(accumulator_delta)
+            .ok_or(VertaError::MathOverflow)?;
+    }
+
+    if production_portion > 0 {
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                TokenTransfer {
+                    from: ctx.accounts.admin_ata.to_account_info(),
+                    to: ctx.accounts.production_ata.to_account_info(),
+                    authority: ctx.accounts.admin.to_account_info(),
+                },
+            ),
+            production_portion,
+        )?;
+    }
+
+    msg!(
+        "Revenue deposited: {} micro-USDC ({} backers / {} production)",
+        amount,
+        backer_portion,
+        production_portion
+    );
     Ok(())
 }
 

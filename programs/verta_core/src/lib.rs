@@ -188,6 +188,13 @@ pub mod verta_core {
         instructions::crowdfunding::record_revenue(ctx, amount)
     }
 
+    /// Admin: Deposit settled episode revenue (USDC) into a graduated
+    /// campaign — backer share into the revenue vault + accumulator bump,
+    /// remainder to the production wallet
+    pub fn deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Result<()> {
+        instructions::crowdfunding::deposit_revenue(ctx, amount)
+    }
+
     /// User: Claim their share of accumulated revenue using their Revenue Share Pass
     pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
         instructions::crowdfunding::claim_revenue(ctx)

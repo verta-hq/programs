@@ -52,4 +52,6 @@ pub enum VertaError {
     NotFinalized,
     #[msg("The vault does not hold enough lamports for this payout.")]
     InsufficientVaultBalance,
+    #[msg("Token account mint does not match the campaign's settlement mint.")]
+    InvalidMint,
 }
