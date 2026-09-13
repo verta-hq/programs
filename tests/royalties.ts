@@ -1405,4 +1405,99 @@ describe("verta_core royalties", () => {
       "InvalidBasisPoints"
     );
   });
+
+  // ── Coin-economy checkpoint (CreditEpoch) ─────────────────────────────────
+
+  const epochDay = 20_700; // arbitrary UTC day index
+  const creditEpochPda = (day: number): PublicKey => {
+    const le = Buffer.alloc(4);
+    le.writeUInt32LE(day);
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from("credit_epoch"), le],
+      program.programId
+    )[0];
+  };
+  const zeroRoot = Array.from(new Uint8Array(32));
+
+  it("records a credit epoch checkpoint (admin)", async () => {
+    await program.methods
+      .recordCreditEpoch(
+        epochDay,
+        new anchor.BN(1_100),
+        new anchor.BN(150),
+        new anchor.BN(0),
+        new anchor.BN(9_500_000),
+        zeroRoot
+      )
+      .accounts({
+        platformConfig,
+        admin: admin.publicKey,
+        creditEpoch: creditEpochPda(epochDay),
+        payer: admin.publicKey,
+        systemProgram: SystemProgram.programId,
+      } as any)
+      .signers([admin])
+      .rpc();
+
+    const epoch = await program.account.creditEpoch.fetch(
+      creditEpochPda(epochDay)
+    );
+    expect(epoch.epochDay).to.equal(epochDay);
+    expect(epoch.coinsSold.toNumber()).to.equal(1_100);
+    expect(epoch.coinsSpent.toNumber()).to.equal(150);
+    expect(epoch.usdLiabilityMicro.toNumber()).to.equal(9_500_000);
+  });
+
+  it("re-recording the same day overwrites idempotently", async () => {
+    await program.methods
+      .recordCreditEpoch(
+        epochDay,
+        new anchor.BN(1_600),
+        new anchor.BN(200),
+        new anchor.BN(500),
+        new anchor.BN(9_000_000),
+        zeroRoot
+      )
+      .accounts({
+        platformConfig,
+        admin: admin.publicKey,
+        creditEpoch: creditEpochPda(epochDay),
+        payer: admin.publicKey,
+        systemProgram: SystemProgram.programId,
+      } as any)
+      .signers([admin])
+      .rpc();
+
+    const epoch = await program.account.creditEpoch.fetch(
+      creditEpochPda(epochDay)
+    );
+    expect(epoch.coinsSold.toNumber()).to.equal(1_600);
+    expect(epoch.coinsRefunded.toNumber()).to.equal(500);
+    expect(epoch.usdLiabilityMicro.toNumber()).to.equal(9_000_000);
+  });
+
+  it("rejects a non-admin checkpoint writer", async () => {
+    await expectAnchorError(
+      () =>
+        program.methods
+          .recordCreditEpoch(
+            epochDay + 1,
+            new anchor.BN(1),
+            new anchor.BN(0),
+            new anchor.BN(0),
+            new anchor.BN(10_000),
+            zeroRoot
+          )
+          .accounts({
+            platformConfig,
+            admin: outsider.publicKey,
+            creditEpoch: creditEpochPda(epochDay + 1),
+            payer: outsider.publicKey,
+            systemProgram: SystemProgram.programId,
+          } as any)
+          .signers([outsider])
+          .rpc(),
+      "Unauthorized"
+    );
+  });
 });

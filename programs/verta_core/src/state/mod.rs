@@ -102,3 +102,22 @@ pub struct SharePosition {
     pub claimed_checkpoint: u128,
     pub bump: u8,
 }
+
+/// Daily coin-economy checkpoint — the public audit anchor for the
+/// DB-authoritative coin ledger (coins are a closed-loop credit sold via
+/// store IAP; see verta/docs/v-currency-architecture-review.md). One PDA per
+/// UTC day; the backend's checkpoint sweep writes it after the nightly
+/// ledger reconciliation passes. Re-recording the same day overwrites —
+/// idempotent job re-runs, admin-gated.
+#[account]
+#[derive(InitSpace)]
+pub struct CreditEpoch {
+    pub epoch_day: u32, // days since Unix epoch, UTC
+    pub coins_sold: u64,
+    pub coins_spent: u64,
+    pub coins_refunded: u64,
+    pub usd_liability_micro: u64, // outstanding coins x face value (micro-USD)
+    pub balances_root: [u8; 32],  // merkle root of (wallet, balance); zeroed until shipped
+    pub recorded_at: i64,
+    pub bump: u8,
+}

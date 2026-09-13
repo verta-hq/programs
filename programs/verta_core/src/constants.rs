@@ -5,6 +5,7 @@ pub const TITLE_CONFIG_SEED: &[u8] = b"title_config";
 pub const UNLOCK_RECEIPT_SEED: &[u8] = b"unlock_receipt";
 pub const USER_VAULT_SEED: &[u8] = b"user_vault";
 pub const REVENUE_VAULT_SEED: &[u8] = b"revenue_vault";
+pub const CREDIT_EPOCH_SEED: &[u8] = b"credit_epoch";
 pub const ESCROW_VAULT_SEED: &[u8] = b"escrow_vault";
 
 pub const BPS_DENOMINATOR: u16 = 10_000;

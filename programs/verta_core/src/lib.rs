@@ -53,6 +53,27 @@ pub mod verta_core {
         )
     }
 
+    /// Platform Admin: Record (or re-record) the daily coin-economy checkpoint
+    pub fn record_credit_epoch(
+        ctx: Context<RecordCreditEpoch>,
+        epoch_day: u32,
+        coins_sold: u64,
+        coins_spent: u64,
+        coins_refunded: u64,
+        usd_liability_micro: u64,
+        balances_root: [u8; 32],
+    ) -> Result<()> {
+        instructions::credits::record_credit_epoch(
+            ctx,
+            epoch_day,
+            coins_sold,
+            coins_spent,
+            coins_refunded,
+            usd_liability_micro,
+            balances_root,
+        )
+    }
+
     /// Platform Admin: Register a new series and set its specific royalty split
     pub fn create_title_config(
         ctx: Context<CreateTitleConfig>,

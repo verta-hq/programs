@@ -28,11 +28,19 @@ Anchor uses **yarn** and wallet `~/.config/solana/jbias.json` (see
 ## Source (`programs/verta_core/src/`)
 
 `lib.rs` (entrypoints) · `constants.rs` · `errors.rs` · `state/mod.rs` ·
-`instructions/{admin,series,vault,autoplay,crowdfunding,mod}.rs`
+`instructions/{admin,series,vault,autoplay,credits,crowdfunding,mod}.rs`
 
 ## Instruction groups
 
 - **admin** — `initialize_platform`, `update_platform_config`
+- **credits** — `record_credit_epoch` (admin-gated via PlatformConfig,
+  `init_if_needed` on the `CreditEpoch` PDA `[b"credit_epoch", epoch_day_le]`
+  so same-day re-runs overwrite idempotently). The daily public audit anchor
+  for the backend's DB-authoritative coin economy: coins sold/spent/refunded
+  + outstanding `usd_liability_micro` + a `balances_root` merkle slot
+  (zeroed until that ships). Written by the backend checkpoint sweep after
+  the nightly ledger reconciliation passes; design in
+  `verta/docs/v-currency-architecture-review.md`
 - **series** — `create_title_config`, `update_title_config` (royalty splits in BPS)
 - **vault** — `initialize_user_vault`, `deposit_sol`, `withdraw_sol`,
   `set_vault_delegate` (authorizes the backend delegate)
@@ -81,8 +89,9 @@ Anchor uses **yarn** and wallet `~/.config/solana/jbias.json` (see
      discriminators); mobile must never hand-code discriminator bytes
 - `tests/royalties.ts` covers `auto_unlock_episode` (splits + receipt +
   duplicate rejection), `direct_payout` (splits, no receipt), AutoPlayDisabled,
-  graduated-crowdfund revenue routing, and BPS validation. Keep it in sync with
-  instruction changes.
+  graduated-crowdfund revenue routing, BPS validation, and the CreditEpoch
+  checkpoint (record, idempotent same-day re-record, non-admin rejection).
+  Keep it in sync with instruction changes.
 - Checked math everywhere; `has_one` constraints on admin/user-owned accounts;
   never remove constraints to make tests pass.
 
