@@ -65,7 +65,7 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Test keypair for the local validator
-        run: solana-keygen new --no-bip39-passphrase --silent --force -o ~/.config/solana/id.json
+        run: mkdir -p ~/.config/solana && solana-keygen new --no-bip39-passphrase --silent --force -o ~/.config/solana/jbias.json
 
       - name: Install JS dependencies
         run: yarn install --frozen-lockfile
