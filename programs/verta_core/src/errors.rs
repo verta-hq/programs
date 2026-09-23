@@ -8,10 +8,8 @@ pub enum VertaError {
     InvalidBasisPoints,
     #[msg("Invalid title ID length.")]
     InvalidTitleId,
-    #[msg("Invalid episode ID length.")]
-    InvalidEpisodeId,
-    #[msg("Price must be greater than zero.")]
-    InvalidPrice,
+    #[msg("Amount must be greater than zero.")]
+    InvalidAmount,
     #[msg("Invalid recipient address.")]
     InvalidRecipient,
     #[msg("The platform is currently paused.")]
@@ -20,12 +18,6 @@ pub enum VertaError {
     TitleInactive,
     #[msg("A math overflow occurred.")]
     MathOverflow,
-    #[msg("Automatic playback is not enabled for this user.")]
-    AutoPlayDisabled,
-    #[msg("The vault does not have enough funds.")]
-    InsufficientVaultFunds,
-    #[msg("Only the designated delegate can perform this action.")]
-    OnlyDelegate,
     #[msg("The crowdfunding campaign is not active.")]
     CampaignInactive,
     #[msg("The crowdfunding campaign has ended.")]
@@ -50,8 +42,20 @@ pub enum VertaError {
     CampaignCancelled,
     #[msg("The campaign has not been finalized.")]
     NotFinalized,
-    #[msg("The vault does not hold enough lamports for this payout.")]
+    #[msg("The vault does not hold enough funds for this payout.")]
     InsufficientVaultBalance,
     #[msg("Token account mint does not match the campaign's settlement mint.")]
     InvalidMint,
+    #[msg("Mint is not the platform settlement mint.")]
+    InvalidSettlementMint,
+    #[msg("Deadline must be in the future.")]
+    InvalidDeadline,
+    #[msg("There is no pending admin to accept.")]
+    NoPendingAdmin,
+    #[msg("Token transfer did not move the expected amount.")]
+    TransferAmountMismatch,
+    #[msg("The campaign deadline has passed.")]
+    CampaignDeadlinePassed,
+    #[msg("Signer is not the program upgrade authority.")]
+    NotUpgradeAuthority,
 }
