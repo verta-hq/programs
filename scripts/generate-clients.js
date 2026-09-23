@@ -120,10 +120,16 @@ const main = async () => {
         `idl/verta_core.json drifted from target/idl/verta_core.json`,
       );
     }
-    const drift = diffDirs(localClientDir, backendClientDir);
-    if (drift.length > 0) {
-      failures.push(
-        `backend generated client drifted:\n  ${drift.join("\n  ")}`,
+    if (fs.existsSync(path.dirname(backendClientDir))) {
+      const drift = diffDirs(localClientDir, backendClientDir);
+      if (drift.length > 0) {
+        failures.push(
+          `backend generated client drifted:\n  ${drift.join("\n  ")}`,
+        );
+      }
+    } else {
+      console.log(
+        `Backend checkout not found at ${path.relative(root, backendClientDir)}; skipped the backend client comparison (idl/ diff still enforced).`,
       );
     }
     if (failures.length > 0) {
