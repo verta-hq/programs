@@ -45,7 +45,10 @@ jobs:
 
       - name: Install Anchor CLI
         if: steps.toolchain-cache.outputs.cache-hit != 'true'
-        run: cargo install anchor-cli --version ${ANCHOR_VERSION} --locked --force
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q pkg-config libudev-dev
+          cargo install anchor-cli --version ${ANCHOR_VERSION} --locked --force
 
       - name: Add toolchains to PATH
         run: |
