@@ -36,26 +36,20 @@ jobs:
         with:
           path: |
             ~/.local/share/solana
-            ~/.avm
             ~/.cargo/bin/anchor
-            ~/.cargo/bin/avm
-          key: toolchain-${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}-anchor-${{ env.ANCHOR_VERSION }}
+          key: toolchain-${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}-anchor-cli-${{ env.ANCHOR_VERSION }}
 
       - name: Install Solana CLI
         if: steps.toolchain-cache.outputs.cache-hit != 'true'
         run: sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
 
-      - name: Install Anchor
+      - name: Install Anchor CLI
         if: steps.toolchain-cache.outputs.cache-hit != 'true'
-        run: |
-          cargo install --git https://github.com/solana-foundation/anchor avm --force
-          avm install ${ANCHOR_VERSION}
-          avm use ${ANCHOR_VERSION}
+        run: cargo install anchor-cli --version ${ANCHOR_VERSION} --locked --force
 
       - name: Add toolchains to PATH
         run: |
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.avm/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache cargo registry + target
