@@ -7,53 +7,40 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("D2FTBiHZkkaGAQzLcivACqEuZnSAKatZzCg8ej5bVzUT");
+declare_id!("A3CuYy9r2tpU4BafDSEbasuvFJAG3Nvet8oKAv6J1Pzr");
 
 #[program]
 pub mod verta_core {
     use super::*;
 
-    /// Platform Admin: Initialize the Verta Protocol
     pub fn initialize_platform(
         ctx: Context<InitializePlatform>,
         admin: Pubkey,
-        platform_wallet: Pubkey,
-        price_sol: u64,
-        creator_bps: u16,
-        platform_bps: u16,
+        operator: Pubkey,
     ) -> Result<()> {
-        instructions::admin::initialize_platform(
-            ctx,
-            admin,
-            platform_wallet,
-            price_sol,
-            creator_bps,
-            platform_bps,
-        )
+        instructions::admin::initialize_platform(ctx, admin, operator)
     }
 
-    /// Platform Admin: Update global configuration (Prices, Splits, etc)
     pub fn update_platform_config(
         ctx: Context<UpdatePlatformConfig>,
-        new_admin: Option<Pubkey>,
-        new_wallet: Option<Pubkey>,
-        new_price: Option<u64>,
-        new_creator_bps: Option<u16>,
-        new_platform_bps: Option<u16>,
+        new_operator: Option<Pubkey>,
         paused: Option<bool>,
     ) -> Result<()> {
-        instructions::admin::update_platform_config(
-            ctx,
-            new_admin,
-            new_wallet,
-            new_price,
-            new_creator_bps,
-            new_platform_bps,
-            paused,
-        )
+        instructions::admin::update_platform_config(ctx, new_operator, paused)
     }
 
-    /// Platform Admin: Record (or re-record) the daily coin-economy checkpoint
+    pub fn pause(ctx: Context<Pause>) -> Result<()> {
+        instructions::admin::pause(ctx)
+    }
+
+    pub fn propose_admin(ctx: Context<ProposeAdmin>, new_admin: Pubkey) -> Result<()> {
+        instructions::admin::propose_admin(ctx, new_admin)
+    }
+
+    pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
+        instructions::admin::accept_admin(ctx)
+    }
+
     pub fn record_credit_epoch(
         ctx: Context<RecordCreditEpoch>,
         epoch_day: u32,
@@ -74,11 +61,9 @@ pub mod verta_core {
         )
     }
 
-    /// Platform Admin: Register a new series and set its specific royalty split
     pub fn create_title_config(
         ctx: Context<CreateTitleConfig>,
         title_id: String,
-        authority: Pubkey,
         creator_wallet: Pubkey,
         creator_bps: u16,
         platform_bps: u16,
@@ -87,7 +72,6 @@ pub mod verta_core {
         instructions::series::create_title_config(
             ctx,
             title_id,
-            authority,
             creator_wallet,
             creator_bps,
             platform_bps,
@@ -95,10 +79,8 @@ pub mod verta_core {
         )
     }
 
-    /// Platform Admin: Update series configuration
     pub fn update_title_config(
         ctx: Context<UpdateTitleConfig>,
-        new_authority: Option<Pubkey>,
         new_creator_wallet: Option<Pubkey>,
         new_creator_bps: Option<u16>,
         new_platform_bps: Option<u16>,
@@ -106,7 +88,6 @@ pub mod verta_core {
     ) -> Result<()> {
         instructions::series::update_title_config(
             ctx,
-            new_authority,
             new_creator_wallet,
             new_creator_bps,
             new_platform_bps,
@@ -114,41 +95,12 @@ pub mod verta_core {
         )
     }
 
-    /// User: Initialize personal SOL vault
-    pub fn initialize_user_vault(ctx: Context<InitializeUserVault>) -> Result<()> {
-        instructions::vault::initialize_user_vault(ctx)
-    }
-
-    /// User: Top-up vault with native SOL
-    pub fn deposit_sol(ctx: Context<DepositSol>, amount: u64) -> Result<()> {
-        instructions::vault::deposit_sol(ctx, amount)
-    }
-
-    /// User: Withdraw native SOL from vault
-    pub fn withdraw_sol(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
-        instructions::vault::withdraw_sol(ctx, amount)
-    }
-
-    /// User: Authorize/Deauthorize a backend delegate
-    pub fn set_vault_delegate(
-        ctx: Context<SetVaultDelegate>,
-        delegate: Pubkey,
-        enabled: bool,
+    pub fn create_revenue_share_collection(
+        ctx: Context<CreateRevenueShareCollection>,
     ) -> Result<()> {
-        instructions::vault::set_vault_delegate(ctx, delegate, enabled)
+        instructions::crowdfunding::create_revenue_share_collection(ctx)
     }
 
-    /// Backend: Trigger an automatic episode unlock from user vault
-    pub fn auto_unlock_episode(ctx: Context<AutoUnlockEpisode>, episode_id: String) -> Result<()> {
-        instructions::autoplay::auto_unlock_episode(ctx, episode_id)
-    }
-
-    /// Frictionless Backend Unlock: Payout only, no on-chain receipt
-    pub fn direct_payout(ctx: Context<DirectPayout>, episode_id: String) -> Result<()> {
-        instructions::autoplay::direct_payout(ctx, episode_id)
-    }
-
-    /// Admin: Initialize a new crowdfunding campaign
     pub fn initialize_crowdfund(
         ctx: Context<InitializeCrowdfund>,
         series_id: String,
@@ -167,56 +119,34 @@ pub mod verta_core {
         )
     }
 
-    /// Admin: Create the global Metaplex Core collection for Revenue Share Passes
-    pub fn create_revenue_share_collection(
-        ctx: Context<CreateRevenueShareCollection>,
-    ) -> Result<()> {
-        instructions::crowdfunding::create_revenue_share_collection(ctx)
-    }
-
-    /// User: Contribute $SOL to a crowdfunding campaign
     pub fn contribute(ctx: Context<Contribute>, amount: u64) -> Result<()> {
         instructions::crowdfunding::contribute(ctx, amount)
     }
 
-    /// Admin: Finalize a successful campaign and release funds
     pub fn finalize_campaign(ctx: Context<FinalizeCampaign>) -> Result<()> {
         instructions::crowdfunding::finalize_campaign(ctx)
     }
 
-    /// Admin: Mark a campaign as failed after its deadline (enabling refunds)
     pub fn fail_campaign(ctx: Context<HaltCampaign>) -> Result<()> {
         instructions::crowdfunding::fail_campaign(ctx)
     }
 
-    /// Admin: Cancel an active campaign (enabling refunds)
     pub fn cancel_campaign(ctx: Context<HaltCampaign>) -> Result<()> {
         instructions::crowdfunding::cancel_campaign(ctx)
     }
 
-    /// User: Claim refund from a failed campaign
     pub fn refund(ctx: Context<Refund>) -> Result<()> {
         instructions::crowdfunding::refund(ctx)
     }
 
-    /// User: Mint their Revenue Share Pass after a successful campaign
     pub fn mint_revenue_share(ctx: Context<MintRevenueShare>) -> Result<()> {
         instructions::crowdfunding::mint_revenue_share(ctx)
     }
 
-    /// Backend: Record graduated crowdfund revenue through the delegated unlock path
-    pub fn record_revenue(ctx: Context<RecordRevenue>, amount: u64) -> Result<()> {
-        instructions::crowdfunding::record_revenue(ctx, amount)
-    }
-
-    /// Admin: Deposit settled episode revenue (USDC) into a graduated
-    /// campaign — backer share into the revenue vault + accumulator bump,
-    /// remainder to the production wallet
     pub fn deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Result<()> {
         instructions::crowdfunding::deposit_revenue(ctx, amount)
     }
 
-    /// User: Claim their share of accumulated revenue using their Revenue Share Pass
     pub fn claim_revenue(ctx: Context<ClaimRevenue>) -> Result<()> {
         instructions::crowdfunding::claim_revenue(ctx)
     }

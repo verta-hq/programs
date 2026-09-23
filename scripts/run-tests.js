@@ -14,7 +14,8 @@ const testsDir = path.resolve(__dirname, "..", "tests");
 const files = fs
   .readdirSync(testsDir, { recursive: true })
   .filter((name) => String(name).endsWith(".ts"))
-  .map((name) => path.join(testsDir, String(name)));
+  .map((name) => path.join(testsDir, String(name)))
+  .sort();
 
 if (files.length === 0) {
   console.error(`No .ts test files found in ${testsDir}`);

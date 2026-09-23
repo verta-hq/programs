@@ -1,4 +1,5 @@
 [toolchain]
+anchor_version = "0.32.2"
 package_manager = "yarn"
 
 [features]
@@ -6,10 +7,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-verta_core = "D2FTBiHZkkaGAQzLcivACqEuZnSAKatZzCg8ej5bVzUT"
+verta_core = "A3CuYy9r2tpU4BafDSEbasuvFJAG3Nvet8oKAv6J1Pzr"
 
 [programs.localnet]
-verta_core = "D2FTBiHZkkaGAQzLcivACqEuZnSAKatZzCg8ej5bVzUT"
+verta_core = "A3CuYy9r2tpU4BafDSEbasuvFJAG3Nvet8oKAv6J1Pzr"
 
 [registry]
 url = "https://api.apr.dev"
@@ -22,9 +23,9 @@ wallet = "~/.config/solana/jbias.json"
 test = "node scripts/run-tests.js"
 
 [test]
-startup_wait = 5000
+startup_wait = 20000
 shutdown_wait = 2000
-upgradeable = false
+upgradeable = true
 
 [[test.genesis]]
 address = "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"
