@@ -1,5 +1,5 @@
 {
-  "license": "ISC",
+  "license": "Apache-2.0",
   "scripts": {
     "build": "anchor build && node scripts/generate-clients.js",
     "test": "anchor test",
