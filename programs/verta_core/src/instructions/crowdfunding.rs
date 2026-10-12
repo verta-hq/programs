@@ -14,8 +14,8 @@ use mpl_core::{
 
 const REVENUE_SHARE_COLLECTION_NAME: &str = "Verta Revenue Shares";
 const REVENUE_SHARE_COLLECTION_URI: &str =
-    "https://verta.app/metadata/revenue-shares-collection.json";
-const REVENUE_SHARE_PASS_URI: &str = "https://verta.app/metadata/revenue-share-pass.json";
+    "https://www.verta.xyz/metadata/revenue-shares-collection.json";
+const REVENUE_SHARE_PASS_URI: &str = "https://www.verta.xyz/metadata/revenue-share-pass.json";
 
 #[derive(Accounts)]
 pub struct CreateRevenueShareCollection<'info> {
